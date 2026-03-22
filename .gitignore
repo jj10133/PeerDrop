@@ -7,3 +7,4 @@ Info.plist
 *.bundle
 *.zip
 *.xcodeproj
+*.DS_Store
