@@ -38,6 +38,8 @@ targets:
       - path: app/App.swift
       - path: app/app.js
       - path: app/app.bundle
+      - path: app/ContentView.swift
+      - path: app/Worker.swift
         optional: true
 
     scheme:
