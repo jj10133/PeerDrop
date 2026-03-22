@@ -12,9 +12,7 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // --- HEADER SECTION ---
             VStack(spacing: 12) {
-                // Top Row: Title and Settings
                 HStack {
                     Text("PeerDrop")
                         .font(.system(size: 14, weight: .bold))
@@ -23,16 +21,14 @@ struct ContentView: View {
                     Spacer()
                     
                     Button {
-                        // Settings Action
                     } label: {
                         Image(systemName: "gear")
                             .font(.system(size: 13))
                     }
-                    .buttonStyle(.plain) // Cleaner than accessoryBar for icons
+                    .buttonStyle(.plain)
                     .foregroundColor(.secondary)
                 }
                 
-                // Bottom Row: The Search Bar
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12, weight: .semibold))
@@ -58,10 +54,8 @@ struct ContentView: View {
             
             Divider()
             
-            // --- MAIN CONTENT ---
             ScrollView {
                 VStack(spacing: 20) {
-                    // Placeholder for actual drop logic or peer list
                     VStack(spacing: 10) {
                         Image(systemName: "antenna.radiowaves.left.and.right")
                             .font(.system(size: 32))
@@ -75,7 +69,7 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .background(Color(NSColor.windowBackgroundColor)) // Matches system toolbars
+            .background(Color(NSColor.windowBackgroundColor))
         }
     }
 }
