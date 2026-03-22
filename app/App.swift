@@ -11,7 +11,7 @@ struct App: SwiftUI.App {
             VStack {
                 ContentView()
             }
-            .frame(width: 320, height: 450)
+//            .frame(width: 320, height: 420)
             .edgesIgnoringSafeArea(.all)
         }
         .menuBarExtraStyle(.window)
