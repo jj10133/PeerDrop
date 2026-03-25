@@ -1,4 +1,3 @@
-import BareKit
 import SwiftUI
 
 @main
@@ -12,7 +11,6 @@ struct App: SwiftUI.App {
                 ContentView()
                     .environmentObject(worker)
             }
-            //.frame(width: 320, height: 420)
             .edgesIgnoringSafeArea(.all)
         }
         .menuBarExtraStyle(.window)
