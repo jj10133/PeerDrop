@@ -11,10 +11,13 @@ module.exports = {
   CMD_TRANSFER_COMPLETE: 6,
   CMD_ERROR:             7,
   CMD_SAVED_PEERS:       11,
+  CMD_PAIRING_COMPLETE:  13,  // JS → Swift: own device successfully paired
 
   // Swift → JS requests (expect a reply)
-  CMD_SEND_FILE:         8,
-  CMD_CONNECT_PEER:      9,
-  CMD_SET_DOWNLOAD_PATH: 10,
-  CMD_FORGET_PEER:       12
+  CMD_SEND_FILE:          8,
+  CMD_CONNECT_PEER:       9,
+  CMD_SET_DOWNLOAD_PATH:  10,
+  CMD_FORGET_PEER:        12,
+  CMD_GENERATE_INVITE:    14, // Device A: generate a pairing QR payload
+  CMD_ACCEPT_INVITE:      15  // Device B: accept an invite scanned from QR
 }

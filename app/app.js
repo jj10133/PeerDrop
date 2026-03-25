@@ -1,28 +1,55 @@
 const Hyperswarm   = require('hyperswarm')
 const os           = require('bare-os')
 const RPC          = require('bare-rpc')
+const IdentityKeys = require('keet-identity-key')
+const crypto       = require('hypercore-crypto')
 
-const cmds           = require('./commands')
-const store          = require('./store')
+const cmds            = require('./commands')
+const store           = require('./store')
 const TransferManager = require('./transfers')
 
 const {
   CMD_READY, CMD_PEER_CONNECTED, CMD_PEER_DISCONNECTED,
-  CMD_SAVED_PEERS, CMD_ERROR,
-  CMD_SEND_FILE, CMD_CONNECT_PEER, CMD_SET_DOWNLOAD_PATH, CMD_FORGET_PEER,
+  CMD_SAVED_PEERS, CMD_PAIRING_COMPLETE,
+  CMD_SEND_FILE, CMD_CONNECT_PEER, CMD_SET_DOWNLOAD_PATH,
+  CMD_FORGET_PEER, CMD_GENERATE_INVITE, CMD_ACCEPT_INVITE,
   CMD_TRANSFER_STARTED
 } = cmds
 
+// z-base-32 — URL-safe, human-friendly, same alphabet as pear:// URLs
+const ZBASE32 = 'ybndrfg8ejkmcpqxot1uwisza345h769'
+
+function zEncode (buf) {
+  let bits = ''; for (const b of buf) bits += b.toString(2).padStart(8, '0')
+  let out = ''; for (let i = 0; i + 5 <= bits.length; i += 5) out += ZBASE32[parseInt(bits.slice(i, i + 5), 2)]
+  return out
+}
+
+function zDecode (str) {
+  const lu = new Uint8Array(256).fill(255)
+  for (let i = 0; i < ZBASE32.length; i++) lu[ZBASE32.charCodeAt(i)] = i
+  let bits = ''; for (const ch of str) bits += lu[ch.charCodeAt(0)].toString(2).padStart(5, '0')
+  const bytes = []; for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2))
+  return Buffer.from(bytes)
+}
+
 class PeerDrop {
   constructor () {
-    this.swarm    = null
-    this.identity = null
+    this.swarm              = null
+    this.identity           = null  // only set on primary device (has mnemonic)
+    this.deviceKeyPair      = null
+    this.attestationProof   = null
+    this.identityPublicKey  = null  // the root signing key — used for proof verification
+    this.discoveryPublicKey = null  // profileDiscoveryPublicKey — the Hyperswarm topic
+                                    // this is also what users share as their "Peer ID"
 
-    // noiseKeyHex → { conn, discoveryKey, deviceName, platform, lastSeen }
+    // noiseKeyHex → { conn, identityKey, discoveryKey, deviceName, platform }
     this.peers = new Map()
 
-    this.rpc = new RPC(BareKit.IPC, (req) => this._onRequest(req))
+    // nonce hex → { ephemeralTopic } — active pairing slots waiting for Device B
+    this.pendingPairings = new Map()
 
+    this.rpc = new RPC(BareKit.IPC, (req) => this._onRequest(req))
     this.transfers = new TransferManager(
       (cmd, payload) => this._emit(cmd, payload),
       () => store.getDownloadPath()
@@ -34,35 +61,43 @@ class PeerDrop {
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   async _init () {
-    this.identity = await store.loadIdentity()
+    const result = await store.loadIdentity()
+    this.identity           = result.identity
+    this.deviceKeyPair      = result.deviceKeyPair
+    this.attestationProof   = result.attestationProof
+    this.identityPublicKey  = result.identityPublicKey
+    this.discoveryPublicKey = result.discoveryPublicKey
 
     this.swarm = new Hyperswarm()
     this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
 
-    // Announce ourselves so others can find and connect to us
-    this.swarm.join(this.identity.profileDiscoveryPublicKey, { server: true, client: false })
+    // Announce ourselves so others can find us by joining our discoveryPublicKey
+    this.swarm.join(this.discoveryPublicKey, { server: true, client: false })
 
-    // Reconnect to all peers from previous sessions
+    // Reconnect to all saved contacts and own devices from previous sessions
     for (const peer of store.loadSavedPeers()) {
-      this._joinPeerTopic(peer.discoveryKey)
+      if (peer.discoveryKey) this._joinPeerTopic(peer.discoveryKey)
     }
 
     this._emit(CMD_READY, {
-      publicKey:    this.identity.profileDiscoveryPublicKey.toString('hex'),
-      downloadPath: store.getDownloadPath()
+      // peerID = discoveryPublicKey — this is what users copy and share with others.
+      // Others paste this into the search bar and join it as a Hyperswarm topic.
+      peerID:          this.discoveryPublicKey.toString('hex'),
+      // myIdentityKey = identityPublicKey — used internally to detect own devices.
+      // If a connected peer has the same identityKey as us, it's our own device.
+      myIdentityKey:   this.identityPublicKey.toString('hex'),
+      downloadPath:    store.getDownloadPath()
     })
+
     this._emitSavedPeers()
   }
 
   // ─── Swift → JS requests ─────────────────────────────────────────────────
 
   _onRequest (req) {
-    if (req.id === undefined) return  // IncomingEvent, not a request
-
-    const body = req.data ? JSON.parse(req.data.toString()) : {}
-    const reply = (err) => err
-      ? req.reply(Buffer.from(err.message))
-      : req.reply()
+    if (req.id === undefined) return
+    const body  = req.data ? JSON.parse(req.data.toString()) : {}
+    const reply = (err) => err ? req.reply(Buffer.from(err.message)) : req.reply()
 
     switch (req.command) {
       case CMD_SEND_FILE:
@@ -70,7 +105,8 @@ class PeerDrop {
         break
 
       case CMD_CONNECT_PEER:
-        this._connectToPeer(body.peerDiscoveryKey).then(() => reply()).catch(reply)
+        // body.peerID is the other person's discoveryPublicKey (their "Peer ID")
+        this._connectToPeer(body.peerID).then(() => reply()).catch(reply)
         break
 
       case CMD_SET_DOWNLOAD_PATH:
@@ -79,34 +115,103 @@ class PeerDrop {
         break
 
       case CMD_FORGET_PEER:
-        this._forgetPeer(body.peerDiscoveryKey)
+        this._forgetPeer(body.peerIdentityKey)
         reply()
         break
 
-      default:
-        reply()
+      case CMD_GENERATE_INVITE:
+        this._generatePairingInvite()
+          .then(url => req.reply(Buffer.from(url)))
+          .catch(reply)
+        break
+
+      case CMD_ACCEPT_INVITE:
+        this._acceptPairingInvite(body.inviteUrl).then(() => reply()).catch(reply)
+        break
+
+      default: reply()
     }
   }
 
-  // ─── Peer discovery ───────────────────────────────────────────────────────
+  // ─── Connecting to other people ───────────────────────────────────────────
+  //
+  // The user pastes the other person's "Peer ID" (discoveryPublicKey hex).
+  // We join that as a Hyperswarm client topic — Hyperswarm finds their
+  // server announcement and connects us. Their handshake proof confirms
+  // who they are. If they have multiple devices, we connect to all of them
+  // but they show as ONE person in the UI (same identityKey).
 
-  async _connectToPeer (hex) {
-    if (!/^[0-9a-f]{64}$/i.test(hex)) {
-      throw new Error('Invalid peer ID — must be a 64-character hex string')
+  async _connectToPeer (discoveryKeyHex) {
+    if (!/^[0-9a-f]{64}$/i.test(discoveryKeyHex)) {
+      throw new Error('Invalid Peer ID — must be a 64-character hex string')
     }
-    store.upsertSavedPeer(hex)
-    this._emitSavedPeers()
-    this._joinPeerTopic(hex)
+    store.upsertSavedPeer(null, { discoveryKey: discoveryKeyHex })
+    this._joinPeerTopic(discoveryKeyHex)
   }
 
   _joinPeerTopic (hex) {
     this.swarm.join(Buffer.from(hex, 'hex'), { server: false, client: true })
   }
 
-  _forgetPeer (hex) {
-    store.removeSavedPeer(hex)
+  _forgetPeer (identityKeyHex) {
+    const saved = store.loadSavedPeers().find(p => p.identityKey === identityKeyHex)
+    if (saved?.discoveryKey) {
+      try { this.swarm.leave(Buffer.from(saved.discoveryKey, 'hex')) } catch (e) {}
+    }
+    store.removeSavedPeer(identityKeyHex)
     this._emitSavedPeers()
-    try { this.swarm.leave(Buffer.from(hex, 'hex')) } catch (e) {}
+  }
+
+  // ─── Adding your own devices (Device A — generates QR) ───────────────────
+  //
+  // Pairing invite = 48 bytes: [ephemeralTopic (32)] + [nonce (16)]
+  // Encoded as z-base-32 → 76 chars → pear://peerdrop/<76chars> → compact QR
+  //
+  // ephemeralTopic: random, one-use topic. NOT our real discoveryKey.
+  // nonce: ties the QR to a specific pending slot on Device A.
+  // Expires after 5 minutes if unused.
+  //
+  // Hyperswarm connections are Noise-encrypted end-to-end.
+  // No extra encryption layer needed — mnemonic never leaves Device A.
+
+  async _generatePairingInvite () {
+    if (!this.identity) {
+      throw new Error('Only the primary device can generate pairing invites')
+    }
+
+    const ephemeralTopic = crypto.randomBytes(32)
+    const nonce          = crypto.randomBytes(16)
+    const nonceHex       = nonce.toString('hex')
+
+    this.swarm.join(ephemeralTopic, { server: true, client: false })
+    this.pendingPairings.set(nonceHex, { ephemeralTopic, createdAt: Date.now() })
+
+    setTimeout(() => {
+      if (this.pendingPairings.has(nonceHex)) {
+        this.pendingPairings.delete(nonceHex)
+        try { this.swarm.leave(ephemeralTopic) } catch (e) {}
+      }
+    }, 5 * 60 * 1000)
+
+    return 'pear://peerdrop/' + zEncode(Buffer.concat([ephemeralTopic, nonce]))
+  }
+
+  // ─── Adding your own devices (Device B — scans QR) ───────────────────────
+
+  async _acceptPairingInvite (inviteUrl) {
+    const encoded = inviteUrl.replace('pear://peerdrop/', '')
+    const payload = zDecode(encoded)
+
+    if (payload.length < 48) throw new Error('Invalid invite')
+
+    const ephemeralTopic = payload.slice(0, 32)
+    const nonce          = payload.slice(32, 48)
+
+    // Fresh keypair for this device — secretKey never leaves here
+    const deviceBKeyPair = crypto.keyPair()
+    this._pendingAccept  = { deviceBKeyPair, nonce, sent: false }
+
+    this.swarm.join(ephemeralTopic, { server: false, client: true })
   }
 
   // ─── Connection handling ──────────────────────────────────────────────────
@@ -114,13 +219,24 @@ class PeerDrop {
   _onConnection (conn, info) {
     const noiseKeyHex = info.publicKey.toString('hex')
 
-    // Introduce ourselves
-    conn.write(JSON.stringify({
-      type:         'handshake',
-      discoveryKey: this.identity.profileDiscoveryPublicKey.toString('hex'),
-      deviceName:   os.hostname(),
-      platform:     os.platform()
-    }) + '\n')
+    if (this._pendingAccept && !this._pendingAccept.sent) {
+      // Device B: send our fresh public key + nonce to Device A
+      this._pendingAccept.sent = true
+      conn.write(JSON.stringify({
+        type:      'pairRequest',
+        deviceKey: this._pendingAccept.deviceBKeyPair.publicKey.toString('hex'),
+        nonce:     this._pendingAccept.nonce.toString('hex')
+      }) + '\n')
+    } else {
+      // Normal handshake for both contacts and own devices
+      conn.write(JSON.stringify({
+        type:             'handshake',
+        attestationProof: this.attestationProof.toString('base64'),
+        discoveryKey:     this.discoveryPublicKey.toString('hex'),
+        deviceName:       os.hostname(),
+        platform:         os.platform()
+      }) + '\n')
+    }
 
     let buf = ''
     conn.on('data', (data) => {
@@ -138,8 +254,8 @@ class PeerDrop {
       const peer = this.peers.get(noiseKeyHex)
       this.peers.delete(noiseKeyHex)
       this._emit(CMD_PEER_DISCONNECTED, {
-        noiseKey:     noiseKeyHex,
-        discoveryKey: peer?.discoveryKey ?? null
+        noiseKey:    noiseKeyHex,
+        identityKey: peer?.identityKey ?? null
       })
     })
 
@@ -148,52 +264,153 @@ class PeerDrop {
 
   _onPeerMessage (conn, noiseKeyHex, msg) {
     switch (msg.type) {
+
+      // ── Normal handshake — both contacts and own devices use this ─────────
       case 'handshake': {
-        const { discoveryKey, deviceName, platform } = msg
+        const { attestationProof, discoveryKey, deviceName, platform } = msg
+
+        // Verify the proof chains back to a real identity
+        let verifiedIdentityKey = null
+        try {
+          const info = IdentityKeys.verify(Buffer.from(attestationProof, 'base64'), null)
+          if (info) verifiedIdentityKey = info.identityPublicKey.toString('hex')
+        } catch (e) {}
+
+        if (!verifiedIdentityKey) {
+          console.warn('Rejecting handshake: invalid proof from', noiseKeyHex.slice(0, 16))
+          conn.destroy(); return
+        }
+
+        // Is this one of our own devices?
+        const isOwnDevice = verifiedIdentityKey === this.identityPublicKey.toString('hex')
 
         this.peers.set(noiseKeyHex, {
-          conn, discoveryKey, deviceName, platform, lastSeen: Date.now()
+          conn, identityKey: verifiedIdentityKey,
+          discoveryKey, deviceName, platform,
+          isOwnDevice, lastSeen: Date.now()
         })
 
-        // Persist / update this peer's record (handles both client and server mode)
-        store.upsertSavedPeer(discoveryKey, { deviceName, platform })
+        store.upsertSavedPeer(verifiedIdentityKey, {
+          discoveryKey, deviceName, platform,
+          lastSeen: Date.now()
+        })
+
+        // Ensure we stay connected to this peer in future sessions
+        if (!isOwnDevice) this._joinPeerTopic(discoveryKey)
+
         this._emitSavedPeers()
-
-        this._emit(CMD_PEER_CONNECTED, { noiseKey: noiseKeyHex, discoveryKey, deviceName, platform })
+        this._emit(CMD_PEER_CONNECTED, {
+          noiseKey:     noiseKeyHex,
+          identityKey:  verifiedIdentityKey,
+          discoveryKey, deviceName, platform,
+          isOwnDevice
+        })
         break
       }
 
+      // ── Pairing step 1: Device A receives Device B's public key ──────────
+      case 'pairRequest': {
+        if (!this.identity) { conn.destroy(); return }
+
+        const { deviceKey, nonce } = msg
+        const pending = this.pendingPairings.get(nonce)
+
+        if (!pending) {
+          console.warn('Rejecting pairRequest: unknown or expired nonce')
+          conn.destroy(); return
+        }
+
+        this.pendingPairings.delete(nonce)
+        try { this.swarm.leave(pending.ephemeralTopic) } catch (e) {}
+
+        // Attest Device B using our device keypair — mnemonic not needed
+        const proofB = IdentityKeys.attestDevice(
+          Buffer.from(deviceKey, 'hex'),
+          this.deviceKeyPair,
+          this.attestationProof
+        )
+
+        conn.write(JSON.stringify({
+          type:              'pairResponse',
+          attestationProof:  proofB.toString('base64'),
+          identityPublicKey: this.identityPublicKey.toString('hex'),
+          discoveryKey:      this.discoveryPublicKey.toString('hex')
+        }) + '\n')
+        break
+      }
+
+      // ── Pairing step 2: Device B receives its attestation ────────────────
+      case 'pairResponse': {
+        if (!this._pendingAccept) return
+        const { deviceBKeyPair } = this._pendingAccept
+
+        const proofBuf           = Buffer.from(msg.attestationProof, 'base64')
+        const identityPublicKey  = Buffer.from(msg.identityPublicKey, 'hex')
+        const discoveryPublicKey = Buffer.from(msg.discoveryKey, 'hex')
+
+        // Verify the proof we received actually attests our key
+        const info = IdentityKeys.verify(proofBuf, null)
+        if (!info || !info.devicePublicKey.equals(deviceBKeyPair.publicKey)) {
+          console.error('pairResponse: proof mismatch')
+          conn.destroy(); return
+        }
+
+        store.writePairingResult({
+          deviceKeyPair: deviceBKeyPair,
+          attestationProof: proofBuf,
+          discoveryPublicKey
+        })
+
+        this.deviceKeyPair      = deviceBKeyPair
+        this.attestationProof   = proofBuf
+        this.identityPublicKey  = identityPublicKey
+        this.discoveryPublicKey = discoveryPublicKey
+        this._pendingAccept     = null
+
+        // Announce on the shared discoveryKey — we're now part of this identity
+        this.swarm.join(this.discoveryPublicKey, { server: true, client: false })
+
+        this._emit(CMD_PAIRING_COMPLETE, {
+          peerID:        this.discoveryPublicKey.toString('hex'),
+          myIdentityKey: this.identityPublicKey.toString('hex')
+        })
+
+        // Switch to normal handshake so we appear in each other's device list
+        conn.write(JSON.stringify({
+          type:             'handshake',
+          attestationProof: this.attestationProof.toString('base64'),
+          discoveryKey:     this.discoveryPublicKey.toString('hex'),
+          deviceName:       os.hostname(),
+          platform:         os.platform()
+        }) + '\n')
+        break
+      }
+
+      // ── File transfer ────────────────────────────────────────────────────
       case 'fileOffer': {
-        const info = this.transfers.onOffer(msg, conn, noiseKeyHex)
-        this._emit(CMD_TRANSFER_STARTED, { ...info, direction: 'receiving' })
+        const tinfo = this.transfers.onOffer(msg, conn, noiseKeyHex)
+        this._emit(CMD_TRANSFER_STARTED, { ...tinfo, direction: 'receiving' })
         break
       }
-
-      case 'fileAccept':
-        this.transfers.onAccept(msg.transferId, conn)
-        break
-
-      case 'fileChunk':
-        this.transfers.onChunk(msg)
-        break
-
-      case 'fileComplete':
-        this.transfers.onComplete(msg)
-        break
+      case 'fileAccept':   this.transfers.onAccept(msg.transferId, conn); break
+      case 'fileChunk':    this.transfers.onChunk(msg);                   break
+      case 'fileComplete': this.transfers.onComplete(msg);                break
     }
   }
 
-  // ─── File sending (public, called via RPC) ────────────────────────────────
+  // ─── File sending ─────────────────────────────────────────────────────────
 
-  async _sendFile (filePath, discoveryKey) {
-    const peer = this._liveConnForDiscoveryKey(discoveryKey)
-    if (!peer) throw new Error('Peer not connected: ' + discoveryKey)
+  // peerId here is identityKey. If the person has multiple devices online,
+  // we pick the first live connection — they all share the same identityKey.
+  async _sendFile (filePath, identityKey) {
+    const peer = this._liveConnForIdentityKey(identityKey)
+    if (!peer) throw new Error('Peer not connected: ' + identityKey)
     this.transfers.offer(filePath, peer.conn)
   }
 
-  _liveConnForDiscoveryKey (discoveryKey) {
+  _liveConnForIdentityKey (identityKey) {
     for (const peer of this.peers.values()) {
-      if (peer.discoveryKey === discoveryKey) return peer
+      if (peer.identityKey === identityKey) return peer
     }
     return null
   }

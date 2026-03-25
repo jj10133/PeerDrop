@@ -7,31 +7,29 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var connectError: String?
 
-    // MARK: - Derived state
-
+    // A valid Peer ID is exactly 64 hex chars (discoveryPublicKey)
     private var queryIsPeerID: Bool {
         query.count == 64 && query.allSatisfy(\.isHexDigit)
     }
 
-    private var sortedDevices: [PeerDevice] {
-        let source = query.isEmpty
-            ? worker.knownDevices
-            : worker.knownDevices.filter {
-                $0.name.localizedCaseInsensitiveContains(query) ||
-                $0.discoveryKey.localizedCaseInsensitiveContains(query)
-            }
-        // Online first, then alphabetical within each group
+    // Filter contacts only (not own devices) when searching
+    private var filteredContacts: [PeerDevice] {
+        let source = query.isEmpty ? worker.contacts : worker.contacts.filter {
+            $0.name.localizedCaseInsensitiveContains(query) ||
+            $0.discoveryKey.localizedCaseInsensitiveContains(query)
+        }
         return source.sorted {
             if $0.isOnline != $1.isOnline { return $0.isOnline }
             return $0.name.localizedCompare($1.name) == .orderedAscending
         }
     }
 
-    private var onlineCount: Int {
-        worker.knownDevices.filter(\.isOnline).count
+    private var sortedOwnDevices: [PeerDevice] {
+        worker.myDevices.sorted {
+            if $0.isOnline != $1.isOnline { return $0.isOnline }
+            return $0.name.localizedCompare($1.name) == .orderedAscending
+        }
     }
-
-    // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,7 +46,7 @@ struct ContentView: View {
         VStack(spacing: 12) {
             titleBar
             connectBar
-            if !worker.myPublicKey.isEmpty { myIDChip }
+            if !worker.myPeerID.isEmpty { myIDChip }
         }
         .padding(16)
         .background(.ultraThinMaterial)
@@ -70,11 +68,11 @@ struct ContentView: View {
     private var connectBar: some View {
         VStack(spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: queryIsPeerID ? "personalhotspot" : "magnifyingglass")
+                Image(systemName: queryIsPeerID ? "person.badge.plus" : "magnifyingglass")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(queryIsPeerID ? .blue : .secondary)
 
-                TextField("Search or paste a Peer ID to connect", text: $query)
+                TextField("Paste someone's Peer ID to connect", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .onSubmit { attemptConnect() }
@@ -86,8 +84,7 @@ struct ContentView: View {
                         .foregroundColor(.blue)
                 }
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 10)
+            .padding(.vertical, 8).padding(.horizontal, 10)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
@@ -95,11 +92,8 @@ struct ContentView: View {
             )
 
             if let err = connectError {
-                Text(err)
-                    .font(.system(size: 10))
-                    .foregroundColor(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
+                Text(err).font(.system(size: 10)).foregroundColor(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
             }
         }
     }
@@ -107,23 +101,17 @@ struct ContentView: View {
     private var myIDChip: some View {
         HStack(spacing: 4) {
             Image(systemName: "personalhotspot").font(.system(size: 8))
-            Text("My ID: \(worker.myPublicKey.prefix(12))...")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.secondary)
+            Text("My ID: \(worker.myPeerID.prefix(12))...")
+                .font(.system(size: 9, weight: .medium)).foregroundColor(.secondary)
             Spacer()
             Button {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(worker.myPublicKey, forType: .string)
-            } label: {
-                Image(systemName: "doc.on.doc").font(.system(size: 9))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
+                NSPasteboard.general.setString(worker.myPeerID, forType: .string)
+            } label: { Image(systemName: "doc.on.doc").font(.system(size: 9)) }
+            .buttonStyle(.plain).foregroundColor(.secondary)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.blue.opacity(0.08))
-        .cornerRadius(6)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(Color.blue.opacity(0.08)).cornerRadius(6)
     }
 
     // MARK: - Scroll content
@@ -132,7 +120,8 @@ struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if !worker.activeTransfers.isEmpty { transfersSection }
-                devicesSection
+                if !worker.myDevices.isEmpty || query.isEmpty { ownDevicesSection }
+                peopleSection
                 resourcesSection
             }
             .padding(16)
@@ -147,39 +136,78 @@ struct ContentView: View {
         }
     }
 
-    private var devicesSection: some View {
+    // MY DEVICES — own devices with the same identity
+    private var ownDevicesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                SectionHeader(title: "DEVICES").padding(.horizontal, 4)
+                SectionHeader(title: "MY DEVICES").padding(.horizontal, 4)
                 Spacer()
-                if !worker.knownDevices.isEmpty {
-                    Text("\(onlineCount) online")
-                        .font(.system(size: 10))
+                // Shortcut to add another device
+                Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
+                .buttonStyle(.plain)
+                .help("Add another device")
             }
 
-            if sortedDevices.isEmpty {
-                emptyDevicesPlaceholder
+            if sortedOwnDevices.isEmpty {
+                VStack(spacing: 6) {
+                    Text("Only this device")
+                        .font(.system(size: 12)).foregroundColor(.secondary)
+                    Text("Open Settings to add another device with the same identity")
+                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 12)
             } else {
-                ForEach(sortedDevices) { device in
+                ForEach(sortedOwnDevices) { device in
                     DeviceRow(device: device)
                         .onTapGesture {
                             DevicePanelController.show(device: device, worker: worker)
                         }
-                        .contextMenu {
-                            Button {
-                                DevicePanelController.show(device: device, worker: worker)
-                            } label: {
-                                Label("Open Send Panel", systemImage: "arrow.up.circle")
-                            }
-                            Divider()
-                            Button(role: .destructive) {
-                                worker.forgetPeer(discoveryKey: device.discoveryKey)
-                            } label: {
-                                Label("Forget Device", systemImage: "trash")
-                            }
+                        .contextMenu { deviceContextMenu(device) }
+                }
+            }
+        }
+    }
+
+    // PEOPLE — other people's devices
+    private var peopleSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                SectionHeader(title: "PEOPLE").padding(.horizontal, 4)
+                Spacer()
+                if !worker.contacts.isEmpty {
+                    let online = worker.contacts.filter(\.isOnline).count
+                    Text("\(online) online")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+            }
+
+            if filteredContacts.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "person.slash")
+                        .font(.system(size: 24)).foregroundColor(.secondary)
+                    Text(query.isEmpty ? "No contacts yet" : "No matching contacts")
+                        .font(.system(size: 12)).foregroundColor(.secondary)
+                    if query.isEmpty {
+                        Text("Paste someone's Peer ID above to connect to them")
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 24)
+            } else {
+                ForEach(filteredContacts) { device in
+                    DeviceRow(device: device)
+                        .onTapGesture {
+                            DevicePanelController.show(device: device, worker: worker)
                         }
+                        .contextMenu { deviceContextMenu(device) }
                 }
             }
         }
@@ -193,23 +221,19 @@ struct ContentView: View {
         }
     }
 
-    private var emptyDevicesPlaceholder: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                .font(.system(size: 24))
-                .foregroundColor(.secondary)
-            Text(query.isEmpty ? "No devices yet" : "No matching devices")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-            if query.isEmpty {
-                Text("Paste a Peer ID above to connect to someone")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
-            }
+    @ViewBuilder
+    private func deviceContextMenu(_ device: PeerDevice) -> some View {
+        Button {
+            DevicePanelController.show(device: device, worker: worker)
+        } label: {
+            Label("Send Files…", systemImage: "arrow.up.circle")
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
+        Divider()
+        Button(role: .destructive) {
+            worker.forgetPeer(identityKey: device.id)
+        } label: {
+            Label(device.isOwnDevice ? "Remove This Device" : "Remove Contact", systemImage: "trash")
+        }
     }
 
     // MARK: - Actions
@@ -217,17 +241,14 @@ struct ContentView: View {
     private func attemptConnect() {
         guard queryIsPeerID else { return }
         connectError = nil
-        worker.connectPeer(discoveryKey: query)
+        worker.connectPeer(peerID: query)
         query = ""
     }
-
-
 
     private func openDownloadsFolder() {
         let url = worker.downloadPath.isEmpty
             ? FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Downloads")
-                .appendingPathComponent("PeerDrop")
+                .appendingPathComponent("Downloads").appendingPathComponent("PeerDrop")
             : URL(fileURLWithPath: worker.downloadPath)
         NSWorkspace.shared.open(url)
     }

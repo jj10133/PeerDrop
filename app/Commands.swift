@@ -1,13 +1,4 @@
-//
-//  Cmd.swift
-//  App
-//
-//  Created by Janardhan on 2026-03-25.
-//
-
-
-// RPC command IDs shared between Swift and the JS runtime.
-// Any change here must be mirrored in JS's commands.js.
+// RPC command IDs — must match commands.js exactly.
 
 enum Cmd {
     // JS → Swift events
@@ -19,10 +10,13 @@ enum Cmd {
     static let transferComplete  = UInt(6)
     static let error             = UInt(7)
     static let savedPeers        = UInt(11)
+    static let pairingComplete   = UInt(13)
 
     // Swift → JS requests
     static let sendFile          = UInt(8)
     static let connectPeer       = UInt(9)
     static let setDownloadPath   = UInt(10)
     static let forgetPeer        = UInt(12)
+    static let generateInvite    = UInt(14)
+    static let acceptInvite      = UInt(15)
 }

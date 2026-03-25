@@ -1,11 +1,3 @@
-//
-//  DevicePanelController.swift
-//  App
-//
-//  Created by Janardhan on 2026-03-25.
-//
-
-
 import SwiftUI
 import AppKit
 
@@ -70,8 +62,12 @@ struct DevicePanelView: View {
     @State private var isTargeted = false
 
     // Transfers for this specific peer only
+    // peerId in FileTransfer is the noiseKey — map via worker.noiseToIdentity
     private var peerTransfers: [FileTransfer] {
-        worker.activeTransfers.filter { $0.peerId == device.discoveryKey }
+        worker.activeTransfers.filter { transfer in
+            let ik = worker.noiseToIdentity[transfer.peerId]
+            return ik == device.id
+        }
     }
 
     var body: some View {
@@ -195,7 +191,7 @@ struct DevicePanelView: View {
                     let url  = URL(dataRepresentation: data, relativeTo: nil)
                 else { return }
                 DispatchQueue.main.async {
-                    worker.sendFile(at: url, to: device.discoveryKey)
+                    worker.sendFile(at: url, to: device.id)
                 }
             }
         }
