@@ -49,12 +49,29 @@ async function loadIdentity () {
   const hasProof  = fileExists(proofFile)
   const hasDevice = fileExists(deviceFile)
 
-  // Case B: paired device
+  // Case B: paired device (has proof + device keypair, no mnemonic)
   if (!hasSeed && hasProof && hasDevice) {
     return _loadPairedDevice(deviceFile, proofFile)
   }
 
-  // Case A: primary device
+  // Case C: fresh Device B — no identity at all, waiting to be paired via QR.
+  // Return a temporary unpaired state. The app will show a "pair this device"
+  // screen and call _acceptPairingInvite() to complete setup.
+  // We do NOT generate a mnemonic here — that would create a separate identity
+  // that conflicts with the pairing process.
+  if (!hasSeed && !hasProof) {
+    const tempKeyPair = crypto.keyPair()
+    return {
+      identity:           null,
+      deviceKeyPair:      tempKeyPair,
+      attestationProof:   null,   // no proof until paired
+      identityPublicKey:  null,
+      discoveryPublicKey: null,
+      unpaired:           true    // signal to app.js to skip announcing + wait for pairing
+    }
+  }
+
+  // Case A: primary device (has mnemonic)
   let mnemonic
   try {
     mnemonic = fs.readFileSync(seedFile, 'utf8').trim()

@@ -71,6 +71,14 @@ class PeerDrop {
     this.swarm = new Hyperswarm()
     this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
 
+    if (result.unpaired) {
+      // Fresh Device B — no identity yet. Just start the swarm and wait.
+      // Swift will show the "Pair this device" screen (empty peerID signals this).
+      // The user pastes the invite URL → _acceptPairingInvite() takes over.
+      this._emit(CMD_READY, { peerID: '', myIdentityKey: '', downloadPath: store.getDownloadPath() })
+      return
+    }
+
     // Announce ourselves so others can find us by joining our discoveryPublicKey
     this.swarm.join(this.discoveryPublicKey, { server: true, client: false })
 
@@ -80,13 +88,9 @@ class PeerDrop {
     }
 
     this._emit(CMD_READY, {
-      // peerID = discoveryPublicKey — this is what users copy and share with others.
-      // Others paste this into the search bar and join it as a Hyperswarm topic.
-      peerID:          this.discoveryPublicKey.toString('hex'),
-      // myIdentityKey = identityPublicKey — used internally to detect own devices.
-      // If a connected peer has the same identityKey as us, it's our own device.
-      myIdentityKey:   this.identityPublicKey.toString('hex'),
-      downloadPath:    store.getDownloadPath()
+      peerID:        this.discoveryPublicKey.toString('hex'),
+      myIdentityKey: this.identityPublicKey.toString('hex'),
+      downloadPath:  store.getDownloadPath()
     })
 
     this._emitSavedPeers()
@@ -204,12 +208,13 @@ class PeerDrop {
 
     if (payload.length < 48) throw new Error('Invalid invite')
 
-    const ephemeralTopic = payload.slice(0, 32)
-    const nonce          = payload.slice(32, 48)
+    const ephemeralTopic    = payload.slice(0, 32)
+    const nonce             = payload.slice(32, 48)
+    const ephemeralTopicHex = ephemeralTopic.toString('hex')
 
     // Fresh keypair for this device — secretKey never leaves here
     const deviceBKeyPair = crypto.keyPair()
-    this._pendingAccept  = { deviceBKeyPair, nonce, sent: false }
+    this._pendingAccept  = { deviceBKeyPair, nonce, ephemeralTopicHex, sent: false }
 
     this.swarm.join(ephemeralTopic, { server: false, client: true })
   }
@@ -219,7 +224,14 @@ class PeerDrop {
   _onConnection (conn, info) {
     const noiseKeyHex = info.publicKey.toString('hex')
 
-    if (this._pendingAccept && !this._pendingAccept.sent) {
+    // Only send pairRequest if this connection came in on our ephemeral pairing topic.
+    // info.topics contains the topics this connection is associated with (client mode).
+    const connTopics = (info.topics || []).map(t => t.toString('hex'))
+    const isPairingConn = this._pendingAccept &&
+      !this._pendingAccept.sent &&
+      connTopics.includes(this._pendingAccept.ephemeralTopicHex)
+
+    if (isPairingConn) {
       // Device B: send our fresh public key + nonce to Device A
       this._pendingAccept.sent = true
       conn.write(JSON.stringify({
@@ -227,8 +239,8 @@ class PeerDrop {
         deviceKey: this._pendingAccept.deviceBKeyPair.publicKey.toString('hex'),
         nonce:     this._pendingAccept.nonce.toString('hex')
       }) + '\n')
-    } else {
-      // Normal handshake for both contacts and own devices
+    } else if (this.attestationProof) {
+      // Normal handshake — only if we have an identity (primary or paired device)
       conn.write(JSON.stringify({
         type:             'handshake',
         attestationProof: this.attestationProof.toString('base64'),
@@ -237,6 +249,7 @@ class PeerDrop {
         platform:         os.platform()
       }) + '\n')
     }
+    // else: unpaired Device B connecting on ephemeral topic — pairRequest already sent above
 
     let buf = ''
     conn.on('data', (data) => {
@@ -335,6 +348,16 @@ class PeerDrop {
           attestationProof:  proofB.toString('base64'),
           identityPublicKey: this.identityPublicKey.toString('hex'),
           discoveryKey:      this.discoveryPublicKey.toString('hex')
+        }) + '\n')
+
+        // Device A also introduces itself with a normal handshake so Device B
+        // can add Device A to its own-devices list immediately after pairing
+        conn.write(JSON.stringify({
+          type:             'handshake',
+          attestationProof: this.attestationProof.toString('base64'),
+          discoveryKey:     this.discoveryPublicKey.toString('hex'),
+          deviceName:       os.hostname(),
+          platform:         os.platform()
         }) + '\n')
         break
       }

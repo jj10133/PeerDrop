@@ -32,11 +32,42 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            scrollContent
+        if worker.myPeerID.isEmpty {
+            unpaiiredView
+        } else {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                scrollContent
+            }
+            .frame(width: 340)
         }
+    }
+
+    // This device has no identity — show pairing instructions
+    private var unpaiiredView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "link.badge.plus")
+                .font(.system(size: 36))
+                .foregroundColor(.blue)
+            Text("Pair This Device")
+                .font(.system(size: 15, weight: .bold))
+            Text("This device has no identity yet. Open Settings on your existing device and scan the pairing QR, then paste the invite URL below.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+            Button("Open Settings to Pair") {
+                showSettings = true
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.blue)
+            .popover(isPresented: $showSettings) {
+                SettingsView().environmentObject(worker)
+            }
+        }
+        .padding(24)
         .frame(width: 340)
     }
 
