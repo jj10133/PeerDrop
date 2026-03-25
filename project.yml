@@ -52,6 +52,7 @@ targets:
       - path: app/Worker+Events.swift
       - path: app/IPCBridge.swift
       - path: app/Commands.swift
+      - path: app/DevicePanelController.swift
 
     scheme:
       preActions:
