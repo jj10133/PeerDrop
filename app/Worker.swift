@@ -7,34 +7,25 @@ class Worker: ObservableObject {
 
     // MARK: - Published state
 
-    /// profileDiscoveryPublicKey — what you copy and share with others as your "Peer ID"
+    /// profileDiscoveryPublicKey hex — share this with others as your Peer ID.
+    /// Copy ~/.peerdrop/seed to another device to get the same Peer ID there.
     @Published var myPeerID:      String = ""
-
-    /// identityPublicKey — used internally to detect which connected peers are your own devices
-    @Published var myIdentityKey: String = ""
 
     @Published var knownDevices:    [PeerDevice]   = []
     @Published var activeTransfers: [FileTransfer] = []
     @Published var downloadPath:    String = ""
 
-    // MARK: - Computed device sections
+    // MARK: - Computed sections
 
-    /// Your own devices (same identityKey as you)
-    var myDevices: [PeerDevice] {
-        knownDevices.filter { $0.isOwnDevice }
-    }
-
-    /// Other people (different identityKey)
-    var contacts: [PeerDevice] {
-        knownDevices.filter { !$0.isOwnDevice }
-    }
+    var myDevices: [PeerDevice] { knownDevices.filter(\.isOwnDevice) }
+    var contacts:  [PeerDevice] { knownDevices.filter { !$0.isOwnDevice } }
 
     // MARK: - Internal
 
     let bridge = IPCBridge()
 
-    /// Maps ephemeral noiseKey → stable identityKey for the current session
-    var noiseToIdentity: [String: String] = [:]
+    /// Maps ephemeral noiseKey → stable discoveryKey for disconnect resolution
+    var noiseToDiscovery: [String: String] = [:]
 
     // MARK: - Init
 
@@ -45,39 +36,21 @@ class Worker: ObservableObject {
 
     // MARK: - Public API
 
-    /// Send a file to a peer. peerId = identityKey (stable, same across all their devices).
-    /// If they have multiple devices online, routes to the first available connection.
-    func sendFile(at url: URL, to identityKey: String) {
-        fireAndForget(Cmd.sendFile, body: ["filePath": url.path, "peerId": identityKey])
+    func sendFile(at url: URL, to discoveryKey: String) {
+        fireAndForget(Cmd.sendFile, body: ["filePath": url.path, "peerId": discoveryKey])
     }
 
-    /// Connect to another person. peerID = their discoveryPublicKey (their "Peer ID").
     func connectPeer(peerID: String) {
         fireAndForget(Cmd.connectPeer, body: ["peerID": peerID])
     }
 
-    /// Remove a contact or own device entry.
-    func forgetPeer(identityKey: String) {
-        fireAndForget(Cmd.forgetPeer, body: ["peerIdentityKey": identityKey])
+    func forgetPeer(discoveryKey: String) {
+        fireAndForget(Cmd.forgetPeer, body: ["peerDiscoveryKey": discoveryKey])
     }
 
-    /// Change where received files are saved.
     func setDownloadPath(_ path: String) {
         DispatchQueue.main.async { self.downloadPath = path }
         fireAndForget(Cmd.setDownloadPath, body: ["downloadPath": path])
-    }
-
-    /// Device A: generate a pairing QR invite URL.
-    func generatePairingInvite() async throws -> String {
-        guard let data = try await bridge.request(Cmd.generateInvite, body: [:]),
-              let url = String(data: data, encoding: .utf8), !url.isEmpty
-        else { throw PeerDropError.noInviteReturned }
-        return url
-    }
-
-    /// Device B: submit the pasted invite URL to start pairing.
-    func acceptPairingInvite(url: String) {
-        fireAndForget(Cmd.acceptInvite, body: ["inviteUrl": url])
     }
 
     // MARK: - Helpers
@@ -113,8 +86,4 @@ class Worker: ObservableObject {
     func suspend()   { bridge.suspend() }
     func resume()    { bridge.resume() }
     func terminate() { bridge.terminate() }
-}
-
-enum PeerDropError: Error {
-    case noInviteReturned
 }

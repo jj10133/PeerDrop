@@ -10,13 +10,10 @@ enum Cmd {
     static let transferComplete  = UInt(6)
     static let error             = UInt(7)
     static let savedPeers        = UInt(11)
-    static let pairingComplete   = UInt(13)
 
     // Swift → JS requests
     static let sendFile          = UInt(8)
     static let connectPeer       = UInt(9)
     static let setDownloadPath   = UInt(10)
     static let forgetPeer        = UInt(12)
-    static let generateInvite    = UInt(14)
-    static let acceptInvite      = UInt(15)
 }

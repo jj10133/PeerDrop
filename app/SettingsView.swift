@@ -4,14 +4,7 @@ struct SettingsView: View {
     @EnvironmentObject private var worker: Worker
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showQR        = false
-    @State private var showInviteQR  = false
-    @State private var inviteURL     = ""
-    @State private var isGenerating  = false
-    @State private var inviteInput   = ""
-    @State private var isPairing     = false
-    @State private var pairingDone   = false
-    @State private var pairingError: String?
+    @State private var showPeerIDQR = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,15 +21,7 @@ struct SettingsView: View {
                 .padding(16)
             }
         }
-        .frame(width: 460, height: 580)
-        .onChange(of: worker.myPeerID) { newID in
-            // Fires when JS emits CMD_PAIRING_COMPLETE and Worker updates myPeerID
-            if isPairing && !newID.isEmpty {
-                isPairing   = false
-                pairingDone = true
-                inviteInput = ""
-            }
-        }
+        .frame(width: 460, height: 480)
     }
 
     // MARK: - Header
@@ -54,7 +39,7 @@ struct SettingsView: View {
         .background(.ultraThinMaterial)
     }
 
-    // MARK: - Identity section
+    // MARK: - Identity
 
     private var identitySection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -78,11 +63,11 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain).foregroundColor(.secondary).help("Copy Peer ID")
 
-                Button { showQR = true } label: {
+                Button { showPeerIDQR = true } label: {
                     Image(systemName: "qrcode").font(.system(size: 12))
                 }
                 .buttonStyle(.plain).foregroundColor(.secondary).help("Show QR Code")
-                .popover(isPresented: $showQR, arrowEdge: .trailing) {
+                .popover(isPresented: $showPeerIDQR, arrowEdge: .trailing) {
                     if !worker.myPeerID.isEmpty { QRCodeView(string: worker.myPeerID) }
                 }
             }
@@ -92,154 +77,51 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Add device section
+    // MARK: - Add device
     //
-    // Device A side: generates a one-time pear://peerdrop/ invite URL → shown as QR.
-    // Device B side: pastes the URL → JS starts the pairing handshake.
-    //
-    // The mnemonic never leaves Device A. Device B receives only its own
-    // fresh device keypair + an attestation proof linking it to the identity.
+    // To use the same identity on another device, copy ~/.peerdrop/seed to that device.
+    // Both devices will then derive the same profileDiscoveryPublicKey and automatically
+    // find and recognise each other on Hyperswarm.
 
     private var addDeviceSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Add Your Device", systemImage: "plus.square.on.square")
                 .font(.system(size: 13, weight: .semibold))
 
-            // ── Device A: show pairing QR ─────────────────────────────────
-            VStack(alignment: .leading, spacing: 8) {
-                Text("On this device, generate a QR code and scan it on your other device.")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
+            Text("To use the same identity on another Mac, copy your seed file to that device. Both devices will automatically find each other.")
+                .font(.system(size: 11)).foregroundColor(.secondary)
 
-                if showInviteQR && !inviteURL.isEmpty {
-                    inviteQRView
-                } else {
-                    generateButton
-                }
+            // Step rows
+            stepRow(number: "1", text: "On the other device, install PeerDrop")
+            stepRow(number: "2", text: "Copy ~/.peerdrop/seed from this Mac to the same path on the other Mac")
+            stepRow(number: "3", text: "Launch PeerDrop on the other device — it will appear in MY DEVICES automatically")
+
+            // Quick action to reveal the seed file in Finder
+            Button {
+                revealSeedInFinder()
+            } label: {
+                Label("Show seed file in Finder", systemImage: "folder")
+                    .font(.system(size: 11))
             }
-
-            Divider().padding(.vertical, 2)
-
-            // ── Device B: paste invite URL ────────────────────────────────
-            VStack(alignment: .leading, spacing: 8) {
-                Text("On the other device, paste the invite URL shown on your existing device.")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
-
-                if pairingDone {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Paired successfully!")
-                                .font(.system(size: 11, weight: .medium))
-                            Text("This device now shares your identity.")
-                                .font(.system(size: 10)).foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(10)
-                    .background(Color.green.opacity(0.08))
-                    .cornerRadius(8)
-                } else {
-                    pasteField
-
-                    if let err = pairingError {
-                        Text(err).font(.system(size: 10)).foregroundColor(.red)
-                    }
-
-                    pairButton
-                }
-            }
+            .buttonStyle(.plain)
+            .foregroundColor(.blue)
         }
     }
 
-    private var generateButton: some View {
-        Button { generateInvite() } label: {
-            HStack(spacing: 8) {
-                if isGenerating { ProgressView().scaleEffect(0.7) }
-                else { Image(systemName: "qrcode.viewfinder").font(.system(size: 13)) }
-                Text(isGenerating ? "Generating…" : "Show Pairing QR")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .frame(maxWidth: .infinity).padding(.vertical, 9)
-            .background(Color.blue.opacity(0.1)).cornerRadius(8).foregroundColor(.blue)
+    private func stepRow(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number + ".")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.blue)
+                .frame(width: 14)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(.plain)
-        .disabled(isGenerating || worker.myPeerID.isEmpty)
     }
 
-    private var inviteQRView: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("Scan on your other device").font(.system(size: 11, weight: .medium))
-                Spacer()
-                // Copy the invite URL — useful on Mac where scanning isn't an option
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(inviteURL, forType: .string)
-                } label: {
-                    Label("Copy Link", systemImage: "doc.on.doc")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.plain).foregroundColor(.blue)
-
-                Button("Done") { showInviteQR = false; inviteURL = "" }
-                    .buttonStyle(.plain).font(.system(size: 11)).foregroundColor(.secondary)
-                    .padding(.leading, 8)
-            }
-            QRCodeView(string: inviteURL)
-            Text("One-time use. Generate a new one for each device.")
-                .font(.system(size: 9)).foregroundColor(.secondary).multilineTextAlignment(.center)
-        }
-        .padding(12)
-        .background(Color.primary.opacity(0.03)).cornerRadius(10)
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
-    }
-
-    private var pasteField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "link").font(.system(size: 11)).foregroundColor(.secondary)
-            TextField("pear://peerdrop/…", text: $inviteInput)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11, design: .monospaced))
-                .truncationMode(.middle)
-            if !inviteInput.isEmpty {
-                Button {
-                    inviteInput  = ""
-                    pairingError = nil
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(9)
-        .background(Color.primary.opacity(0.04)).cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(inviteInput.hasPrefix("pear://peerdrop/")
-                    ? Color.blue.opacity(0.4) : Color.primary.opacity(0.1), lineWidth: 0.5)
-        )
-    }
-
-    private var pairButton: some View {
-        Button { acceptInvite() } label: {
-            HStack(spacing: 6) {
-                if isPairing { ProgressView().scaleEffect(0.7) }
-                else { Image(systemName: "personalhotspot").font(.system(size: 11)) }
-                Text(isPairing ? "Connecting…" : "Pair This Device")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .frame(maxWidth: .infinity).padding(.vertical, 8)
-            .background(inviteInput.hasPrefix("pear://peerdrop/")
-                ? Color.blue.opacity(0.1) : Color.primary.opacity(0.04))
-            .cornerRadius(8)
-            .foregroundColor(inviteInput.hasPrefix("pear://peerdrop/") ? .blue : .secondary)
-        }
-        .buttonStyle(.plain)
-        .disabled(!inviteInput.hasPrefix("pear://peerdrop/") || isPairing)
-    }
-
-    // MARK: - Downloads section
+    // MARK: - Downloads
 
     private var downloadsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -283,41 +165,11 @@ struct SettingsView: View {
 
 extension SettingsView {
 
-    func generateInvite() {
-        isGenerating = true
-        Task {
-            do {
-                let url = try await worker.generatePairingInvite()
-                await MainActor.run {
-                    inviteURL    = url
-                    showInviteQR = true
-                    isGenerating = false
-                }
-            } catch {
-                await MainActor.run {
-                    isGenerating = false
-                    print("❌ generateInvite: \(error)")
-                }
-            }
-        }
-    }
-
-    func acceptInvite() {
-        guard inviteInput.hasPrefix("pear://peerdrop/") else { return }
-        isPairing    = true
-        pairingError = nil
-        // Pass the raw URL string — JS decodes it
-        worker.acceptPairingInvite(url: inviteInput)
-        // Timeout after 10s if pairing never completes
-        Task {
-            try? await Task.sleep(nanoseconds: 10_000_000_000)
-            if isPairing {
-                await MainActor.run {
-                    isPairing    = false
-                    pairingError = "Timed out. Make sure the other device is open and the QR is still valid."
-                }
-            }
-        }
+    func revealSeedInFinder() {
+        let seed = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".peerdrop")
+            .appendingPathComponent("seed")
+        NSWorkspace.shared.activateFileViewerSelecting([seed])
     }
 
     func openDownloadFolder() {

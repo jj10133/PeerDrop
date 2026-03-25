@@ -1,8 +1,7 @@
-// RPC command IDs shared between the JS runtime and Swift.
-// Any change here must be mirrored in Swift's Commands.swift.
+// RPC command IDs — must mirror Commands.swift exactly.
 
 module.exports = {
-  // JS → Swift events (fire-and-forget)
+  // JS → Swift events
   CMD_READY:             1,
   CMD_PEER_CONNECTED:    2,
   CMD_PEER_DISCONNECTED: 3,
@@ -11,13 +10,10 @@ module.exports = {
   CMD_TRANSFER_COMPLETE: 6,
   CMD_ERROR:             7,
   CMD_SAVED_PEERS:       11,
-  CMD_PAIRING_COMPLETE:  13,  // JS → Swift: own device successfully paired
 
-  // Swift → JS requests (expect a reply)
-  CMD_SEND_FILE:          8,
-  CMD_CONNECT_PEER:       9,
-  CMD_SET_DOWNLOAD_PATH:  10,
-  CMD_FORGET_PEER:        12,
-  CMD_GENERATE_INVITE:    14, // Device A: generate a pairing QR payload
-  CMD_ACCEPT_INVITE:      15  // Device B: accept an invite scanned from QR
+  // Swift → JS requests
+  CMD_SEND_FILE:         8,
+  CMD_CONNECT_PEER:      9,
+  CMD_SET_DOWNLOAD_PATH: 10,
+  CMD_FORGET_PEER:       12
 }

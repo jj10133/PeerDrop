@@ -62,11 +62,11 @@ struct DevicePanelView: View {
     @State private var isTargeted = false
 
     // Transfers for this specific peer only
-    // peerId in FileTransfer is the noiseKey — map via worker.noiseToIdentity
+    // peerId in FileTransfer is the noiseKey — map via worker.noiseToDiscovery
     private var peerTransfers: [FileTransfer] {
         worker.activeTransfers.filter { transfer in
-            let ik = worker.noiseToIdentity[transfer.peerId]
-            return ik == device.id
+            let dk = worker.noiseToDiscovery[transfer.peerId]
+            return dk == device.id
         }
     }
 

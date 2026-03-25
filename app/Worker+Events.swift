@@ -27,7 +27,6 @@ extension Worker {
         case Cmd.transferStarted:  onTransferStarted(json)
         case Cmd.transferProgress: onTransferProgress(json)
         case Cmd.transferComplete: onTransferComplete(json)
-        case Cmd.pairingComplete:  onPairingComplete(json)
         case Cmd.error:            onError(json)
         default:                   break
         }
@@ -36,38 +35,31 @@ extension Worker {
     // MARK: - Handlers
 
     private func onReady(_ data: [String: Any]) {
-        // peerID      = profileDiscoveryPublicKey — what users copy and share
-        // myIdentityKey = identityPublicKey — used to detect own devices
-        guard let peerID      = data["peerID"]        as? String,
-              let identityKey = data["myIdentityKey"]  as? String
-        else { return }
+        guard let peerID = data["peerID"] as? String else { return }
         let dl = data["downloadPath"] as? String ?? ""
         DispatchQueue.main.async {
-            self.myPeerID      = peerID
-            self.myIdentityKey = identityKey
-            self.downloadPath  = dl
+            self.myPeerID     = peerID
+            self.downloadPath = dl
         }
     }
 
-    // Full saved-peer roster from JS — reconcile with knownDevices.
-    // Preserves isOnline for currently live connections.
     private func onSavedPeers(_ data: [String: Any]) {
         guard let peers = data["peers"] as? [[String: Any]] else { return }
 
         DispatchQueue.main.async {
             self.knownDevices = peers.compactMap { p in
-                guard let ik = p["identityKey"] as? String else { return nil }
-                let dk       = p["discoveryKey"] as? String ?? ik
-                let name     = p["deviceName"]   as? String
-                let platform = p["platform"]     as? String
+                guard let dk = p["discoveryKey"] as? String else { return nil }
+                let name     = p["displayName"] as? String
+                let platform = p["platform"]    as? String
 
-                let isOnline    = self.knownDevices.first(where: { $0.id == ik })?.isOnline ?? false
-                let isOwnDevice = ik == self.myIdentityKey
+                // Preserve online status for currently live connections
+                let isOnline    = self.knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
+                let isOwnDevice = dk == self.myPeerID
 
                 return PeerDevice(
-                    id:           ik,
+                    id:           dk,
                     discoveryKey: dk,
-                    name:         name ?? String(ik.prefix(12)) + "...",
+                    name:         name ?? String(dk.prefix(12)) + "...",
                     systemImage:  self.systemImage(for: platform ?? ""),
                     isOnline:     isOnline,
                     isOwnDevice:  isOwnDevice
@@ -78,28 +70,27 @@ extension Worker {
 
     private func onPeerConnected(_ data: [String: Any]) {
         guard
-            let noiseKey    = data["noiseKey"]    as? String,
-            let identityKey = data["identityKey"] as? String,
+            let noiseKey     = data["noiseKey"]     as? String,
             let discoveryKey = data["discoveryKey"] as? String,
-            let deviceName  = data["deviceName"]  as? String,
-            let platform    = data["platform"]    as? String
+            let displayName  = data["displayName"]  as? String,
+            let platform     = data["platform"]     as? String
         else { return }
 
         let isOwnDevice = data["isOwnDevice"] as? Bool ?? false
 
         DispatchQueue.main.async {
-            self.noiseToIdentity[noiseKey] = identityKey
+            self.noiseToDiscovery[noiseKey] = discoveryKey
 
             let updated = PeerDevice(
-                id:           identityKey,
+                id:           discoveryKey,
                 discoveryKey: discoveryKey,
-                name:         deviceName,
+                name:         displayName,
                 systemImage:  self.systemImage(for: platform),
                 isOnline:     true,
                 isOwnDevice:  isOwnDevice
             )
 
-            if let i = self.knownDevices.firstIndex(where: { $0.id == identityKey }) {
+            if let i = self.knownDevices.firstIndex(where: { $0.id == discoveryKey }) {
                 self.knownDevices[i] = updated
             } else {
                 self.knownDevices.append(updated)
@@ -111,9 +102,9 @@ extension Worker {
         guard let noiseKey = data["noiseKey"] as? String else { return }
 
         DispatchQueue.main.async {
-            guard let ik = self.noiseToIdentity.removeValue(forKey: noiseKey) else { return }
+            guard let dk = self.noiseToDiscovery.removeValue(forKey: noiseKey) else { return }
 
-            if let i = self.knownDevices.firstIndex(where: { $0.id == ik }) {
+            if let i = self.knownDevices.firstIndex(where: { $0.id == dk }) {
                 let d = self.knownDevices[i]
                 self.knownDevices[i] = PeerDevice(
                     id:           d.id,
@@ -174,17 +165,6 @@ extension Worker {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 self.activeTransfers.removeAll { $0.id == id }
             }
-        }
-    }
-
-    private func onPairingComplete(_ data: [String: Any]) {
-        guard let peerID      = data["peerID"]        as? String,
-              let identityKey = data["myIdentityKey"]  as? String
-        else { return }
-        DispatchQueue.main.async {
-            self.myPeerID      = peerID
-            self.myIdentityKey = identityKey
-            print("✅ Pairing complete — peerID: \(peerID.prefix(16))...")
         }
     }
 
