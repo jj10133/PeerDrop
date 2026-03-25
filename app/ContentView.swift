@@ -1,168 +1,234 @@
-//
-//  ContentView.swift
-//  App
-//
-//  Created by Janardhan on 2026-03-21.
-//
-
 import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var worker: Worker
-    
-    @State private var isTargeted = false
-    @State private var query: String = ""
-    
+
+    @State private var query        = ""
+    @State private var showSettings = false
+    @State private var connectError: String?
+
+    // MARK: - Derived state
+
+    private var queryIsPeerID: Bool {
+        query.count == 64 && query.allSatisfy(\.isHexDigit)
+    }
+
+    private var sortedDevices: [PeerDevice] {
+        let source = query.isEmpty
+            ? worker.knownDevices
+            : worker.knownDevices.filter {
+                $0.name.localizedCaseInsensitiveContains(query) ||
+                $0.discoveryKey.localizedCaseInsensitiveContains(query)
+            }
+        // Online first, then alphabetical within each group
+        return source.sorted {
+            if $0.isOnline != $1.isOnline { return $0.isOnline }
+            return $0.name.localizedCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private var onlineCount: Int {
+        worker.knownDevices.filter(\.isOnline).count
+    }
+
+    // MARK: - Body
+
     var body: some View {
         VStack(spacing: 0) {
-            // --- HEADER ---
-            VStack(spacing: 12) {
-                HStack {
-                    Text("PeerDrop")
-                        .font(.system(size: 14, weight: .bold))
-                    Spacer()
-                    Button { } label: {
-                        Image(systemName: "gear")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
+            header
+            Divider()
+            scrollContent
+        }
+        .frame(width: 340)
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(spacing: 12) {
+            titleBar
+            connectBar
+            if !worker.myPublicKey.isEmpty { myIDChip }
+        }
+        .padding(16)
+        .background(.ultraThinMaterial)
+    }
+
+    private var titleBar: some View {
+        HStack {
+            Text("PeerDrop").font(.system(size: 14, weight: .bold))
+            Spacer()
+            Button { showSettings = true } label: { Image(systemName: "gear") }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .popover(isPresented: $showSettings) {
+                    SettingsView().environmentObject(worker)
                 }
-                
-                searchBar
+        }
+    }
+
+    private var connectBar: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: queryIsPeerID ? "personalhotspot" : "magnifyingglass")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(queryIsPeerID ? .blue : .secondary)
+
+                TextField("Search or paste a Peer ID to connect", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .onSubmit { attemptConnect() }
+
+                if queryIsPeerID {
+                    Button("Connect") { attemptConnect() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.blue)
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(queryIsPeerID ? Color.blue.opacity(0.4) : Color.primary.opacity(0.1), lineWidth: 0.5)
+            )
+
+            if let err = connectError {
+                Text(err)
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+            }
+        }
+    }
+
+    private var myIDChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "personalhotspot").font(.system(size: 8))
+            Text("My ID: \(worker.myPublicKey.prefix(12))...")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.secondary)
+            Spacer()
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(worker.myPublicKey, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc").font(.system(size: 9))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.blue.opacity(0.08))
+        .cornerRadius(6)
+    }
+
+    // MARK: - Scroll content
+
+    private var scrollContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if !worker.activeTransfers.isEmpty { transfersSection }
+                devicesSection
+                resourcesSection
             }
             .padding(16)
-            .background(.ultraThinMaterial)
-            
-            Divider()
-            
-            // --- SCROLLABLE CONTENT ---
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    
-                    // Section 1: Active Devices
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("ACTIVE DEVICES")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 4)
-                        
-                        
-                        ForEach(worker.activeDevices) { device in
-                            DeviceRow(device: device)
-                                .onDrop(of: [.fileURL, .folder], isTargeted: $isTargeted) { providers in
-                                    handleDrop(providers: providers, for: device)
-                                }
-                            // Optional: Visual feedback when dragging over
-                                .opacity(isTargeted ? 0.6 : 1.0)
-                        }
-                    }
-                    
-                    // Section 2: Quick Links
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("RESOURCES")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 4)
-                        
-                        ActionLink(title: "Set up Another Device...", icon: "plus.circle")
-                        ActionLink(title: "Tell someone about PeerDrop", icon: "square.and.arrow.up")
-                        ActionLink(title: "Support us", icon: "dollarsign.arrow.trianglehead.counterclockwise.rotate.90")
-                    }
-                }
-                .padding(16)
-            }
-            .background(Color(NSColor.windowBackgroundColor))
         }
+        .background(Color(NSColor.windowBackgroundColor))
     }
-    
-    private func handleDrop(providers: [NSItemProvider], for device: PeerDevice) -> Bool {
-        for provider in providers {
-            provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { (urlData, error) in
-                if let data = urlData as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                    print("Dropping \(url.lastPathComponent) onto \(device.name)")
-                    
-                    // Trigger your Worklet transfer here:
-                    // worker.worklet.send(file: url, to: device.id)
-                }
-            }
-        }
-        return true
-    }
-    
-    // Sub-component for Search Bar to keep body clean
-    var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-            TextField("Search by Peer ID", text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
-    }
-}
 
-// --- DEVICE ROW COMPONENT ---
-struct DeviceRow: View {
-    let device: PeerDevice
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(Color.blue.opacity(0.1))
-                    .frame(width: 32, height: 32)
-                Image(systemName: device.systemImage)
-                    .font(.system(size: 14))
-                    .foregroundColor(.blue)
-            }
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(device.name)
-                    .font(.system(size: 13, weight: .medium))
-                Text(device.status)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            
+    private var transfersSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "ACTIVE TRANSFERS").padding(.horizontal, 4)
+            ForEach(worker.activeTransfers) { TransferRow(transfer: $0) }
         }
-        .padding(10)
-        .background(Color.primary.opacity(0.04))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.blue.opacity(0.2), lineWidth: 0.5)
-        )
     }
-}
 
-// --- ACTION LINK COMPONENT ---
-struct ActionLink: View {
-    let title: String
-    let icon: String
-    
-    var body: some View {
-        Button(action: {}) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .frame(width: 16)
-                Text(title)
-                    .font(.system(size: 12))
+    private var devicesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                SectionHeader(title: "DEVICES").padding(.horizontal, 4)
                 Spacer()
+                if !worker.knownDevices.isEmpty {
+                    Text("\(onlineCount) online")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .contentShape(Rectangle())
+
+            if sortedDevices.isEmpty {
+                emptyDevicesPlaceholder
+            } else {
+                ForEach(sortedDevices) { device in
+                    DeviceRow(device: device)
+                        .onTapGesture {
+                            DevicePanelController.show(device: device, worker: worker)
+                        }
+                        .contextMenu {
+                            Button {
+                                DevicePanelController.show(device: device, worker: worker)
+                            } label: {
+                                Label("Open Send Panel", systemImage: "arrow.up.circle")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                worker.forgetPeer(discoveryKey: device.discoveryKey)
+                            } label: {
+                                Label("Forget Device", systemImage: "trash")
+                            }
+                        }
+                }
+            }
         }
-        .buttonStyle(.plain)
-        // Hover effect would go here
+    }
+
+    private var resourcesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SectionHeader(title: "RESOURCES").padding(.horizontal, 4)
+            ActionLink(title: "Open Downloads Folder", icon: "folder") { openDownloadsFolder() }
+            ActionLink(title: "Tell someone about PeerDrop", icon: "square.and.arrow.up") {}
+        }
+    }
+
+    private var emptyDevicesPlaceholder: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                .font(.system(size: 24))
+                .foregroundColor(.secondary)
+            Text(query.isEmpty ? "No devices yet" : "No matching devices")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            if query.isEmpty {
+                Text("Paste a Peer ID above to connect to someone")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 32)
+    }
+
+    // MARK: - Actions
+
+    private func attemptConnect() {
+        guard queryIsPeerID else { return }
+        connectError = nil
+        worker.connectPeer(discoveryKey: query)
+        query = ""
+    }
+
+
+
+    private func openDownloadsFolder() {
+        let url = worker.downloadPath.isEmpty
+            ? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Downloads")
+                .appendingPathComponent("PeerDrop")
+            : URL(fileURLWithPath: worker.downloadPath)
+        NSWorkspace.shared.open(url)
     }
 }

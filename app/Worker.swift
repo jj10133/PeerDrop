@@ -1,22 +1,85 @@
-//
-//  Worker.swift
-//  App
-//
-//  Created by Janardhan on 2026-03-21.
-//
-
+import BareRPC
 import Foundation
-import BareKit
+import AppKit
+import UserNotifications
+
+// Worker is the single source of truth for app state.
+// It owns the IPCBridge and exposes a clean public API to SwiftUI views.
+// All event handling lives in Worker+Events.swift.
 
 class Worker: ObservableObject {
-    let worklet = Worklet()
-    
-    @Published var activeDevices: [PeerDevice] = [
-        PeerDevice(id: "g1", name: "Galaxy S21", systemImage: "smartphone", status: "Ready"),
-        PeerDevice(id: "i12", name: "iPhone 12", systemImage: "iphone", status: "Active")
-    ]
-    
+
+    // MARK: - Published state
+
+    @Published var knownDevices:    [PeerDevice]   = []
+    @Published var activeTransfers: [FileTransfer] = []
+    @Published var myPublicKey:     String = ""
+    @Published var downloadPath:    String = ""
+
+    // MARK: - Internal
+
+    let bridge = IPCBridge()
+
+    /// Maps ephemeral noiseKey → stable discoveryKey for the current session.
+    var noiseToDiscovery: [String: String] = [:]
+
+    // MARK: - Init
+
     init() {
-        worklet.start(name: "app", ofType: "bundle")
+        setupEventHandlers()  // defined in Worker+Events.swift
+        Task { await bridge.start() }
     }
+
+    // MARK: - Public API
+
+    func sendFile(at url: URL, to discoveryKey: String) {
+        fireAndForget(Cmd.sendFile, body: ["filePath": url.path, "peerId": discoveryKey])
+    }
+
+    func connectPeer(discoveryKey: String) {
+        fireAndForget(Cmd.connectPeer, body: ["peerDiscoveryKey": discoveryKey])
+    }
+
+    func forgetPeer(discoveryKey: String) {
+        fireAndForget(Cmd.forgetPeer, body: ["peerDiscoveryKey": discoveryKey])
+    }
+
+    func setDownloadPath(_ path: String) {
+        DispatchQueue.main.async { self.downloadPath = path }
+        fireAndForget(Cmd.setDownloadPath, body: ["downloadPath": path])
+    }
+
+    // MARK: - Helpers
+
+    func fireAndForget(_ command: UInt, body: [String: Any]) {
+        Task {
+            do { _ = try await bridge.request(command, body: body) }
+            catch { print("❌ RPC \(command): \(error)") }
+        }
+    }
+
+    func systemImage(for platform: String) -> String {
+        switch platform.lowercased() {
+        case "darwin":           return "desktopcomputer"
+        case "linux":            return "server.rack"
+        case "win32", "windows": return "laptopcomputer"
+        case "ios":              return "iphone"
+        default:                 return "desktopcomputer"
+        }
+    }
+
+    func showNotification(title: String, body: String) {
+        let content   = UNMutableNotificationContent()
+        content.title = title
+        content.body  = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        ) { if let e = $0 { print("❌ Notification: \(e)") } }
+    }
+
+    // MARK: - Lifecycle
+    func suspend()   { bridge.suspend() }
+    func resume()    { bridge.resume() }
+    func terminate() { bridge.terminate() }
 }
