@@ -1,71 +1,74 @@
 name: App
-
 include:
   - app/addons/addons.yml
 packages:
   BareKit:
     url: https://github.com/holepunchto/bare-kit-swift
     branch: main
+  BareRPC:
+    url: https://github.com/holepunchto/bare-rpc-swift
+    branch: main
 targets:
   App:
     type: application
-    supportedDestinations: [iOS, macOS]
+    supportedDestinations: [macOS]
     deploymentTarget:
-      iOS: 18.4
       macOS: 15.0
-
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: to.holepunch.bare
         SWIFT_VERSION: 5.0
         CODE_SIGN_STYLE: Automatic
-
     info:
       path: app/Info.plist
-
     entitlements:
       path: app/App.entitlements
       properties:
         # com.apple.security.application-groups:
         #   - group.to.holepunch.bare.ios
         com.apple.security.cs.allow-jit: true
-
     dependencies:
       - framework: app/frameworks/BareKit.xcframework
       - package: BareKit
-
+      - package: BareRPC
     sources:
       - path: app/App.swift
       - path: app/app.js
       - path: app/app.bundle
+        optional: true
       - path: app/ContentView.swift
       - path: app/Worker.swift
       - path: app/PeerDevice.swift
-        optional: true
+      - path: app/FileTransfer.swift
+      - path: app/README.md
+      - path: app/SettingsView.swift
+      - path: app/transfers.js
+      - path: app/store.js
+      - path: app/commands.js
+      - path: app/Components.swift
+      - path: app/QRCodeView.swift
+      - path: app/TransferRow.swift
+      - path: app/DeviceRow.swift
+      - path: app/Worker+Events.swift
+      - path: app/IPCBridge.swift
+      - path: app/Commands.swift
 
     scheme:
       preActions:
         - name: Link & Pack
           script: |
-            case "$PLATFORM_NAME" in
-              iphoneos|iphonesimulator)
-                PRESET=ios
-                ;;
-              macosx)
-                PRESET=darwin
-                ;;
-              *)
-                PRESET=ios
-                ;;
-            esac
-
             PATH="${PATH}" "${PWD}/node_modules/.bin/bare-link" \
-              --preset ${PRESET} \
-              --out ${PWD}/app/addons \
+              --host darwin-arm64 \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --out ${PWD}/app/addons/ \
               ${PWD}
 
             PATH="${PATH}" "${PWD}/node_modules/.bin/bare-pack" \
-              --preset ${PRESET} \
+              --host darwin-arm64 \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --linked \
               --base ${PWD} \
               --out ${PWD}/app/app.bundle \
               ${PWD}/app/app.js
