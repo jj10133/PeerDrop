@@ -49,20 +49,20 @@ extension Worker {
         DispatchQueue.main.async {
             self.knownDevices = peers.compactMap { p in
                 guard let dk = p["discoveryKey"] as? String else { return nil }
-                let displayName = p["displayName"] as? String
-                let hostname    = p["hostname"]    as? String
-                let platform    = p["platform"]    as? String
+                let name     = p["displayName"] as? String
+                let platform = p["platform"]    as? String
 
-                // Preserve online status across roster refreshes
-                let isOnline = self.knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
+                // Preserve online status for currently live connections
+                let isOnline    = self.knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
+                let isOwnDevice = dk == self.myPeerID
 
                 return PeerDevice(
                     id:           dk,
                     discoveryKey: dk,
-                    displayName:  displayName,
-                    hostname:     hostname,
+                    name:         name ?? String(dk.prefix(12)) + "...",
                     systemImage:  self.systemImage(for: platform ?? ""),
-                    isOnline:     isOnline
+                    isOnline:     isOnline,
+                    isOwnDevice:  isOwnDevice
                 )
             }
         }
@@ -72,24 +72,22 @@ extension Worker {
         guard
             let noiseKey     = data["noiseKey"]     as? String,
             let discoveryKey = data["discoveryKey"] as? String,
-            let hostname     = data["hostname"]     as? String,
+            let displayName  = data["displayName"]  as? String,
             let platform     = data["platform"]     as? String
         else { return }
+
+        let isOwnDevice = data["isOwnDevice"] as? Bool ?? false
 
         DispatchQueue.main.async {
             self.noiseToDiscovery[noiseKey] = discoveryKey
 
-            // Preserve any user-set displayName already in the list
-            let existing    = self.knownDevices.first(where: { $0.id == discoveryKey })
-            let displayName = existing?.displayName
-
             let updated = PeerDevice(
                 id:           discoveryKey,
                 discoveryKey: discoveryKey,
-                displayName:  displayName,
-                hostname:     hostname,
+                name:         displayName,
                 systemImage:  self.systemImage(for: platform),
-                isOnline:     true
+                isOnline:     true,
+                isOwnDevice:  isOwnDevice
             )
 
             if let i = self.knownDevices.firstIndex(where: { $0.id == discoveryKey }) {
@@ -111,10 +109,10 @@ extension Worker {
                 self.knownDevices[i] = PeerDevice(
                     id:           d.id,
                     discoveryKey: d.discoveryKey,
-                    displayName:  d.displayName,
-                    hostname:     d.hostname,
+                    name:         d.name,
                     systemImage:  d.systemImage,
-                    isOnline:     false
+                    isOnline:     false,
+                    isOwnDevice:  d.isOwnDevice
                 )
             }
         }

@@ -22,11 +22,16 @@ function writeJSON (filePath, data) {
 
 // ─── Identity ─────────────────────────────────────────────────────────────────
 //
-// Each device has its own identity derived from a mnemonic stored in
-// ~/.peerdrop/seed. The profileDiscoveryPublicKey is the Peer ID — share it
-// with anyone (person or your own other device) to connect.
+// Identity = mnemonic stored in ~/.peerdrop/seed
+// Copy that file to another device → same identity → devices recognise each other.
 //
-// There is no concept of "own devices" vs "contacts". Every peer is a peer.
+// Two keys are derived from the mnemonic:
+//   identityPublicKey        — used internally to detect own devices
+//                              (same on all your devices)
+//   profileDiscoveryPublicKey — the Hyperswarm topic you announce on and share
+//                              as your "Peer ID" (same on all your devices)
+//
+// No device keypairs, no attestation proofs, no pairing handshakes needed.
 
 async function loadIdentity () {
   ensureDir(ROOT)
@@ -42,7 +47,10 @@ async function loadIdentity () {
   }
 
   const identity = await IdentityKeys.from({ mnemonic })
-  return { discoveryPublicKey: identity.profileDiscoveryPublicKey }
+
+  return {
+    discoveryPublicKey: identity.profileDiscoveryPublicKey
+  }
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -58,15 +66,15 @@ function setDownloadPath (p) { ensureDir(p); saveConfig({ downloadPath: p }) }
 // ─── Saved peers ──────────────────────────────────────────────────────────────
 //
 // Each entry: {
-//   discoveryKey: string        — their Peer ID / Hyperswarm topic
-//   displayName:  string | null — user-assigned label (e.g. "My iPhone", "Alice")
-//   hostname:     string | null — last seen hostname from handshake
+//   discoveryKey: string   — the topic we join to reach this peer (their Peer ID)
+//   displayName:  string | null
 //   platform:     string | null
 //   lastSeen:     number | null
 // }
 //
-// displayName is what the user sets. hostname is what the device advertises.
-// UI shows displayName if set, otherwise hostname, otherwise truncated key.
+// We key on discoveryKey because that's what the user shares and what we join.
+// Own devices are identified at runtime by comparing discoveryKey to ours —
+// not stored separately.
 
 const PEERS_PATH = path.join(ROOT, 'saved-peers.json')
 
@@ -77,27 +85,19 @@ function upsertSavedPeer (discoveryKey, fields = {}) {
   const idx   = peers.findIndex(p => p.discoveryKey === discoveryKey)
 
   if (idx >= 0) {
-    // Never overwrite a user-set displayName with an empty value
-    if (fields.hostname)     peers[idx].hostname     = fields.hostname
-    if (fields.platform)     peers[idx].platform     = fields.platform
-    if (fields.lastSeen)     peers[idx].lastSeen     = fields.lastSeen
-    // displayName only updated if explicitly passed (rename command)
-    if ('displayName' in fields) peers[idx].displayName = fields.displayName
+    if (fields.displayName) peers[idx].displayName = fields.displayName
+    if (fields.platform)    peers[idx].platform    = fields.platform
+    if (fields.lastSeen)    peers[idx].lastSeen    = fields.lastSeen
   } else {
     peers.push({
       discoveryKey,
       displayName: fields.displayName || null,
-      hostname:    fields.hostname    || null,
       platform:    fields.platform    || null,
       lastSeen:    fields.lastSeen    || null
     })
   }
 
   writeJSON(PEERS_PATH, peers)
-}
-
-function renamePeer (discoveryKey, displayName) {
-  upsertSavedPeer(discoveryKey, { displayName: displayName || null })
 }
 
 function removeSavedPeer (discoveryKey) {
@@ -110,6 +110,5 @@ module.exports = {
   setDownloadPath,
   loadSavedPeers,
   upsertSavedPeer,
-  renamePeer,
   removeSavedPeer
 }

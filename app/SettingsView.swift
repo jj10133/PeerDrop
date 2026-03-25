@@ -14,12 +14,14 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     identitySection
                     Divider()
+                    addDeviceSection
+                    Divider()
                     downloadsSection
                 }
                 .padding(16)
             }
         }
-        .frame(width: 420, height: 340)
+        .frame(width: 460, height: 480)
     }
 
     // MARK: - Header
@@ -44,7 +46,7 @@ struct SettingsView: View {
             Label("Your Identity", systemImage: "personalhotspot")
                 .font(.system(size: 13, weight: .semibold))
 
-            Text("Share your Peer ID with anyone you want to exchange files with — another person or one of your own devices.")
+            Text("Share your Peer ID with others so they can send you files. It's the same across all your devices.")
                 .font(.system(size: 10)).foregroundColor(.secondary)
 
             HStack {
@@ -72,6 +74,50 @@ struct SettingsView: View {
             .padding(10)
             .background(Color.primary.opacity(0.04))
             .cornerRadius(8)
+        }
+    }
+
+    // MARK: - Add device
+    //
+    // To use the same identity on another device, copy ~/.peerdrop/seed to that device.
+    // Both devices will then derive the same profileDiscoveryPublicKey and automatically
+    // find and recognise each other on Hyperswarm.
+
+    private var addDeviceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Add Your Device", systemImage: "plus.square.on.square")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text("To use the same identity on another Mac, copy your seed file to that device. Both devices will automatically find each other.")
+                .font(.system(size: 11)).foregroundColor(.secondary)
+
+            // Step rows
+            stepRow(number: "1", text: "On the other device, install PeerDrop")
+            stepRow(number: "2", text: "Copy ~/.peerdrop/seed from this Mac to the same path on the other Mac")
+            stepRow(number: "3", text: "Launch PeerDrop on the other device — it will appear in MY DEVICES automatically")
+
+            // Quick action to reveal the seed file in Finder
+            Button {
+                revealSeedInFinder()
+            } label: {
+                Label("Show seed file in Finder", systemImage: "folder")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.blue)
+        }
+    }
+
+    private func stepRow(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number + ".")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.blue)
+                .frame(width: 14)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -118,6 +164,13 @@ struct SettingsView: View {
 // MARK: - Actions
 
 extension SettingsView {
+
+    func revealSeedInFinder() {
+        let seed = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".peerdrop")
+            .appendingPathComponent("seed")
+        NSWorkspace.shared.activateFileViewerSelecting([seed])
+    }
 
     func openDownloadFolder() {
         let url = worker.downloadPath.isEmpty
