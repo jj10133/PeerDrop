@@ -7,18 +7,13 @@ class Worker: ObservableObject {
 
     // MARK: - Published state
 
-    /// profileDiscoveryPublicKey hex — share this with others as your Peer ID.
-    /// Copy ~/.peerdrop/seed to another device to get the same Peer ID there.
-    @Published var myPeerID:      String = ""
+    /// This device's Peer ID (profileDiscoveryPublicKey hex).
+    /// Share with anyone — person or your own other device — to connect.
+    @Published var myPeerID:        String = ""
 
     @Published var knownDevices:    [PeerDevice]   = []
     @Published var activeTransfers: [FileTransfer] = []
     @Published var downloadPath:    String = ""
-
-    // MARK: - Computed sections
-
-    var myDevices: [PeerDevice] { knownDevices.filter(\.isOwnDevice) }
-    var contacts:  [PeerDevice] { knownDevices.filter { !$0.isOwnDevice } }
 
     // MARK: - Internal
 
@@ -46,6 +41,13 @@ class Worker: ObservableObject {
 
     func forgetPeer(discoveryKey: String) {
         fireAndForget(Cmd.forgetPeer, body: ["peerDiscoveryKey": discoveryKey])
+    }
+
+    func renamePeer(discoveryKey: String, displayName: String) {
+        fireAndForget(Cmd.renamePeer, body: [
+            "peerDiscoveryKey": discoveryKey,
+            "displayName": displayName
+        ])
     }
 
     func setDownloadPath(_ path: String) {

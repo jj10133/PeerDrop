@@ -2,40 +2,49 @@ import SwiftUI
 import AppKit
 
 // MARK: - Panel host
-// Opens a floating NSPanel for a specific device.
-// NSPanel (rather than a sheet/popover) is required so the window:
-//   • stays visible when the user switches to Finder to drag files
-//   • accepts drag-and-drop while another app is frontmost
 
 final class DevicePanelController: NSWindowController {
 
-    static var open: [String: DevicePanelController] = [:]  // discoveryKey → controller
+    static var open: [String: DevicePanelController] = [:]
 
     static func show(device: PeerDevice, worker: Worker) {
         if let existing = open[device.discoveryKey] {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
-        let controller = DevicePanelController(device: device, worker: worker)
+        let controller = DevicePanelController(device: device, worker: worker, mode: .send)
         open[device.discoveryKey] = controller
         controller.showWindow(nil)
     }
 
-    private init(device: PeerDevice, worker: Worker) {
+    static func showRename(device: PeerDevice, worker: Worker) {
+        // If panel already open, bring it to front (rename accessible via panel too)
+        if let existing = open[device.discoveryKey] {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let controller = DevicePanelController(device: device, worker: worker, mode: .rename)
+        open[device.discoveryKey] = controller
+        controller.showWindow(nil)
+    }
+
+    enum Mode { case send, rename }
+
+    private init(device: PeerDevice, worker: Worker, mode: Mode) {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 460),
             styleMask:   [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
             backing:     .buffered,
             defer:       false
         )
-        panel.title                   = device.name
-        panel.titlebarAppearsTransparent = true
-        panel.isMovableByWindowBackground = true
-        panel.isFloatingPanel         = true   // stays above Finder
-        panel.worksWhenModal          = true
+        panel.title                          = device.name
+        panel.titlebarAppearsTransparent     = true
+        panel.isMovableByWindowBackground    = true
+        panel.isFloatingPanel                = true
+        panel.worksWhenModal                 = true
         panel.center()
 
-        let view = DevicePanelView(device: device)
+        let view = DevicePanelView(device: device, initialMode: mode)
             .environmentObject(worker)
         panel.contentView = NSHostingView(rootView: view)
 
@@ -43,30 +52,35 @@ final class DevicePanelController: NSWindowController {
 
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
-            object: panel,
-            queue: .main
+            object:  panel,
+            queue:   .main
         ) { [weak self] _ in
             DevicePanelController.open.removeValue(forKey: device.discoveryKey)
-            _ = self  // retain until closed
+            _ = self
         }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 }
 
-// MARK: - Panel content view
+// MARK: - Panel content
 
 struct DevicePanelView: View {
     let device: PeerDevice
-    @EnvironmentObject private var worker: Worker
-    @State private var isTargeted = false
+    let initialMode: DevicePanelController.Mode
 
-    // Transfers for this specific peer only
-    // peerId in FileTransfer is the noiseKey — map via worker.noiseToDiscovery
+    @EnvironmentObject private var worker: Worker
+    @State private var isTargeted   = false
+    @State private var showRename   = false
+    @State private var renameText   = ""
+
+    private var currentDevice: PeerDevice {
+        worker.knownDevices.first(where: { $0.id == device.id }) ?? device
+    }
+
     private var peerTransfers: [FileTransfer] {
         worker.activeTransfers.filter { transfer in
-            let dk = worker.noiseToDiscovery[transfer.peerId]
-            return dk == device.id
+            worker.noiseToDiscovery[transfer.peerId] == device.id
         }
     }
 
@@ -74,14 +88,24 @@ struct DevicePanelView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            dropZone
-            if !peerTransfers.isEmpty {
-                Divider()
-                transferList
+            if showRename {
+                renameView
+            } else {
+                dropZone
+                if !peerTransfers.isEmpty {
+                    Divider()
+                    transferList
+                }
             }
         }
         .frame(width: 320)
         .background(Color(NSColor.windowBackgroundColor))
+        .onAppear {
+            if initialMode == .rename {
+                renameText = currentDevice.displayName ?? ""
+                showRename = true
+            }
+        }
     }
 
     // MARK: - Header
@@ -90,30 +114,95 @@ struct DevicePanelView: View {
         HStack(spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
                 Circle()
-                    .fill(device.isOnline ? Color.blue.opacity(0.12) : Color.primary.opacity(0.06))
+                    .fill(currentDevice.isOnline ? Color.blue.opacity(0.12) : Color.primary.opacity(0.06))
                     .frame(width: 36, height: 36)
-                Image(systemName: device.systemImage)
+                Image(systemName: currentDevice.systemImage)
                     .font(.system(size: 16))
-                    .foregroundColor(device.isOnline ? .blue : .secondary)
+                    .foregroundColor(currentDevice.isOnline ? .blue : .secondary)
                 Circle()
-                    .fill(device.isOnline ? Color.green : Color.secondary.opacity(0.4))
+                    .fill(currentDevice.isOnline ? Color.green : Color.secondary.opacity(0.4))
                     .frame(width: 9, height: 9)
                     .overlay(Circle().stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1.5))
                     .offset(x: 2, y: 2)
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(device.name)
+                Text(currentDevice.name)
                     .font(.system(size: 14, weight: .semibold))
-                Text(device.isOnline ? "Ready to receive files" : "Offline — reconnecting…")
+                Text(currentDevice.isOnline ? "Ready to receive files" : "Offline — reconnecting…")
                     .font(.system(size: 11))
-                    .foregroundColor(device.isOnline ? .secondary : .orange)
+                    .foregroundColor(currentDevice.isOnline ? .secondary : .orange)
             }
+
             Spacer()
+
+            // Rename button
+            Button {
+                renameText = currentDevice.displayName ?? ""
+                showRename.toggle()
+            } label: {
+                Image(systemName: showRename ? "xmark.circle" : "pencil")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(showRename ? "Cancel rename" : "Rename peer")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .background(.ultraThinMaterial)
+    }
+
+    // MARK: - Rename
+
+    private var renameView: some View {
+        VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Label this peer")
+                    .font(.system(size: 12, weight: .medium))
+                Text("Give this peer a memorable name. This is only visible to you.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            TextField("e.g. My iPhone, Alice's Mac…", text: $renameText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(9)
+                .background(Color.primary.opacity(0.05))
+                .cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
+                .onSubmit { saveRename() }
+
+            HStack(spacing: 10) {
+                Button("Cancel") {
+                    showRename = false
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+
+                Spacer()
+
+                if currentDevice.displayName != nil {
+                    Button("Clear label") {
+                        renameText = ""
+                        saveRename()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                }
+
+                Button("Save") { saveRename() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding(16)
     }
 
     // MARK: - Drop zone
@@ -136,12 +225,10 @@ struct DevicePanelView: View {
                     .font(.system(size: 36))
                     .foregroundColor(isTargeted ? .blue : .secondary)
                     .animation(.easeInOut(duration: 0.15), value: isTargeted)
-
-                Text(device.isOnline ? "Drop files here to send" : "Peer is offline")
+                Text(currentDevice.isOnline ? "Drop files here to send" : "Peer is offline")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(isTargeted ? .blue : .secondary)
-
-                if device.isOnline {
+                if currentDevice.isOnline {
                     Text("Supports any file type or folder")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary.opacity(0.7))
@@ -152,7 +239,7 @@ struct DevicePanelView: View {
         .frame(height: 180)
         .padding(16)
         .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
-            guard device.isOnline else { return false }
+            guard currentDevice.isOnline else { return false }
             return handleDrop(providers)
         }
     }
@@ -167,12 +254,9 @@ struct DevicePanelView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
-
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(peerTransfers) { transfer in
-                        PanelTransferRow(transfer: transfer)
-                    }
+                    ForEach(peerTransfers) { PanelTransferRow(transfer: $0) }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
@@ -181,7 +265,12 @@ struct DevicePanelView: View {
         }
     }
 
-    // MARK: - Drop handler
+    // MARK: - Actions
+
+    private func saveRename() {
+        worker.renamePeer(discoveryKey: device.id, displayName: renameText.trimmingCharacters(in: .whitespaces))
+        showRename = false
+    }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         for provider in providers {
@@ -199,7 +288,7 @@ struct DevicePanelView: View {
     }
 }
 
-// MARK: - Transfer row for the panel
+// MARK: - Transfer row
 
 struct PanelTransferRow: View {
     let transfer: FileTransfer
@@ -213,24 +302,18 @@ struct PanelTransferRow: View {
                 Image(systemName: isSending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
                     .font(.system(size: 14))
                     .foregroundColor(color)
-
                 Text(transfer.fileName)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
-
                 Spacer()
-
                 Text("\(transfer.progressPercentage)%")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
             }
-
-            // Progress bar
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.primary.opacity(0.08))
-                        .frame(height: 5)
+                        .fill(Color.primary.opacity(0.08)).frame(height: 5)
                     RoundedRectangle(cornerRadius: 3)
                         .fill(color.opacity(0.8))
                         .frame(width: geo.size.width * transfer.progress, height: 5)
@@ -238,16 +321,13 @@ struct PanelTransferRow: View {
                 }
             }
             .frame(height: 5)
-
             HStack {
                 Text(transfer.formattedSize)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 10)).foregroundColor(.secondary)
                 Spacer()
                 if transfer.isComplete {
                     Label("Done", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.green)
+                        .font(.system(size: 10)).foregroundColor(.green)
                 }
             }
         }

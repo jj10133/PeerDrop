@@ -15,5 +15,6 @@ module.exports = {
   CMD_SEND_FILE:         8,
   CMD_CONNECT_PEER:      9,
   CMD_SET_DOWNLOAD_PATH: 10,
-  CMD_FORGET_PEER:       12
+  CMD_FORGET_PEER:       12,
+  CMD_RENAME_PEER:       13
 }

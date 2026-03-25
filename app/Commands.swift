@@ -16,4 +16,5 @@ enum Cmd {
     static let connectPeer       = UInt(9)
     static let setDownloadPath   = UInt(10)
     static let forgetPeer        = UInt(12)
+    static let renamePeer        = UInt(13)
 }

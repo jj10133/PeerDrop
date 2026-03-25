@@ -1,7 +1,6 @@
 const Hyperswarm   = require('hyperswarm')
 const os           = require('bare-os')
 const RPC          = require('bare-rpc')
-const crypto       = require('hypercore-crypto')
 
 const cmds            = require('./commands')
 const store           = require('./store')
@@ -9,17 +8,18 @@ const TransferManager = require('./transfers')
 
 const {
   CMD_READY, CMD_PEER_CONNECTED, CMD_PEER_DISCONNECTED,
-  CMD_SAVED_PEERS,
-  CMD_SEND_FILE, CMD_CONNECT_PEER, CMD_SET_DOWNLOAD_PATH, CMD_FORGET_PEER,
+  CMD_SAVED_PEERS, CMD_ERROR,
+  CMD_SEND_FILE, CMD_CONNECT_PEER, CMD_SET_DOWNLOAD_PATH,
+  CMD_FORGET_PEER, CMD_RENAME_PEER,
   CMD_TRANSFER_STARTED
 } = cmds
 
 class PeerDrop {
   constructor () {
     this.swarm              = null
-    this.discoveryPublicKey = null  // profileDiscoveryPublicKey — your Peer ID and Hyperswarm topic
+    this.discoveryPublicKey = null  // this device's Peer ID and Hyperswarm topic
 
-    // noiseKeyHex → { conn, discoveryKey, displayName, platform, isOwnDevice }
+    // noiseKeyHex → { conn, discoveryKey, hostname, platform }
     this.peers = new Map()
 
     this.rpc = new RPC(BareKit.IPC, (req) => this._onRequest(req))
@@ -40,10 +40,10 @@ class PeerDrop {
     this.swarm = new Hyperswarm()
     this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
 
-    // Announce on our topic so others (and our own devices) can find us
-    this.swarm.join(this.discoveryPublicKey, { server: true, client: true })
+    // Announce so others can find us by joining our discoveryPublicKey as client
+    this.swarm.join(this.discoveryPublicKey, { server: true, client: false })
 
-    // Reconnect to saved contacts from previous sessions
+    // Reconnect to all saved peers from previous sessions
     for (const peer of store.loadSavedPeers()) {
       this._joinTopic(peer.discoveryKey)
     }
@@ -82,6 +82,12 @@ class PeerDrop {
         reply()
         break
 
+      case CMD_RENAME_PEER:
+        store.renamePeer(body.peerDiscoveryKey, body.displayName)
+        this._emitSavedPeers()
+        reply()
+        break
+
       default: reply()
     }
   }
@@ -92,6 +98,7 @@ class PeerDrop {
     if (!/^[0-9a-f]{64}$/i.test(discoveryKeyHex)) {
       throw new Error('Invalid Peer ID — must be a 64-character hex string')
     }
+    // Save immediately so it persists even before they connect
     store.upsertSavedPeer(discoveryKeyHex)
     this._joinTopic(discoveryKeyHex)
     this._emitSavedPeers()
@@ -112,11 +119,10 @@ class PeerDrop {
   _onConnection (conn, info) {
     const noiseKeyHex = info.publicKey.toString('hex')
 
-    // Introduce ourselves — no proofs needed, just who we are
     conn.write(JSON.stringify({
       type:         'handshake',
       discoveryKey: this.discoveryPublicKey.toString('hex'),
-      displayName:  os.hostname(),
+      hostname:     os.hostname(),
       platform:     os.platform()
     }) + '\n')
 
@@ -148,25 +154,20 @@ class PeerDrop {
     switch (msg.type) {
 
       case 'handshake': {
-        const { discoveryKey, displayName, platform } = msg
-
-        // Own device = same discoveryKey as us (same mnemonic → same topic)
-        const isOwnDevice = discoveryKey === this.discoveryPublicKey.toString('hex')
+        const { discoveryKey, hostname, platform } = msg
 
         this.peers.set(noiseKeyHex, {
-          conn, discoveryKey, displayName, platform, isOwnDevice, lastSeen: Date.now()
+          conn, discoveryKey, hostname, platform, lastSeen: Date.now()
         })
 
-        // Save contact (own devices are already on our topic so no need to rejoin)
-        if (!isOwnDevice) {
-          store.upsertSavedPeer(discoveryKey, {
-            displayName, platform, lastSeen: Date.now()
-          })
-          this._emitSavedPeers()
-        }
+        // Update hostname/platform — never overwrite user-set displayName
+        store.upsertSavedPeer(discoveryKey, {
+          hostname, platform, lastSeen: Date.now()
+        })
 
+        this._emitSavedPeers()
         this._emit(CMD_PEER_CONNECTED, {
-          noiseKey: noiseKeyHex, discoveryKey, displayName, platform, isOwnDevice
+          noiseKey: noiseKeyHex, discoveryKey, hostname, platform
         })
         break
       }
@@ -185,8 +186,6 @@ class PeerDrop {
 
   // ─── File sending ─────────────────────────────────────────────────────────
 
-  // peerId = discoveryKey. If they have multiple devices online (own or contact),
-  // routes to the first live connection for that discoveryKey.
   async _sendFile (filePath, discoveryKey) {
     const peer = this._liveConn(discoveryKey)
     if (!peer) throw new Error('Peer not connected: ' + discoveryKey)
