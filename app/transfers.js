@@ -3,7 +3,6 @@ const fs     = require('bare-fs')
 const path   = require('bare-path')
 
 const {
-  CMD_TRANSFER_STARTED,
   CMD_TRANSFER_PROGRESS,
   CMD_TRANSFER_COMPLETE,
   CMD_ERROR
@@ -26,7 +25,7 @@ class TransferManager {
 
   // ─── Sending ───────────────────────────────────────────────────────────────
 
-  offer (filePath, conn, noiseKey) {
+  offer (filePath, conn) {
     const stats      = fs.statSync(filePath)
     const transferId = crypto.randomBytes(16).toString('hex')
     const fileName   = path.basename(filePath)
@@ -45,15 +44,6 @@ class TransferManager {
       sent:     0,
       conn,
       lastProgressAt: 0
-    })
-
-    // Notify Swift so the sending transfer appears in the active transfers UI
-    this._emit(CMD_TRANSFER_STARTED, {
-      transferId,
-      peerId:   noiseKey || '',  // noiseKey of the remote peer — same as receiver uses
-      fileName,
-      fileSize: stats.size,
-      direction: 'sending'
     })
 
     return transferId
@@ -175,13 +165,11 @@ class TransferManager {
     const transfer = this._transfers.get(msg.transferId)
     if (!transfer) return
 
-    // End the write stream — flushes buffered data and closes the fd.
-    // Use the 'finish' event rather than an .end() callback — bare-stream
-    // Writables emit 'finish' reliably but may not support a callback arg.
-    transfer.writeStream.once('finish', () => {
+    // End the write stream — flushes any buffered data and closes the fd
+    transfer.writeStream.end(() => {
       if (transfer.writeError) return // already reported
 
-      this._emitProgress(transfer, true) // force final 100%
+      this._emitProgress(transfer, true) // force 100%
       this._emit(CMD_TRANSFER_COMPLETE, {
         transferId: msg.transferId,
         direction:  'received',
@@ -190,7 +178,6 @@ class TransferManager {
       })
       this._transfers.delete(msg.transferId)
     })
-    transfer.writeStream.end()
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
