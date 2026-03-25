@@ -1,11 +1,3 @@
-//
-//  transfers.js
-//  App
-//
-//  Created by Janardhan on 2026-03-25.
-//
-
-
 const crypto = require('hypercore-crypto')
 const fs     = require('bare-fs')
 const path   = require('bare-path')
@@ -16,13 +8,15 @@ const {
   CMD_ERROR
 } = require('./commands')
 
-const CHUNK_SIZE = 64 * 1024 // 64 KB
+// 1 MB chunks — large enough to amortise per-chunk overhead,
+// small enough to give smooth progress on any file size.
+const CHUNK_SIZE = 1024 * 1024
+
+// Minimum ms between progress events emitted to Swift.
+// Prevents flooding the UI on fast local transfers.
+const PROGRESS_THROTTLE_MS = 100
 
 class TransferManager {
-  /**
-   * @param {(command: number, payload: object) => void} emit  RPC emit helper
-   * @param {() => string} getDownloadPath                     Current download folder
-   */
   constructor (emit, getDownloadPath) {
     this._emit            = emit
     this._getDownloadPath = getDownloadPath
@@ -31,120 +25,202 @@ class TransferManager {
 
   // ─── Sending ───────────────────────────────────────────────────────────────
 
-  /**
-   * Initiate a send by writing a fileOffer message to the peer connection.
-   * Returns the transferId so the caller can track it.
-   */
   offer (filePath, conn) {
     const stats      = fs.statSync(filePath)
     const transferId = crypto.randomBytes(16).toString('hex')
     const fileName   = path.basename(filePath)
 
-    this._transfers.set(transferId, {
-      transferId, filePath, fileName,
-      fileSize: stats.size,
-      sent: 0,
-      active: false
-    })
-
     conn.write(JSON.stringify({
-      type: 'fileOffer',
+      type:        'fileOffer',
       transferId,
       fileName,
       fileSize:    stats.size,
       isDirectory: stats.isDirectory()
     }) + '\n')
 
+    this._transfers.set(transferId, {
+      transferId, filePath, fileName,
+      fileSize: stats.size,
+      sent:     0,
+      conn,
+      lastProgressAt: 0
+    })
+
     return transferId
   }
 
-  /** Called when the remote accepts our offer — start streaming. */
   onAccept (transferId, conn) {
     const transfer = this._transfers.get(transferId)
     if (!transfer) return
-    transfer.active = true
     this._stream(transfer, conn)
   }
 
   _stream (transfer, conn) {
-    const stream = fs.createReadStream(transfer.filePath, { highWaterMark: CHUNK_SIZE })
+    const stream = fs.createReadStream(transfer.filePath, {
+      highWaterMark: CHUNK_SIZE
+    })
 
+    // Backpressure: pause reading when the connection buffer is full.
+    // This prevents unbounded memory growth for large files.
     stream.on('data', (chunk) => {
-      conn.write(JSON.stringify({
-        type: 'fileChunk',
+      const msg = JSON.stringify({
+        type:       'fileChunk',
         transferId: transfer.transferId,
-        data: chunk.toString('base64')
-      }) + '\n')
+        data:       chunk.toString('base64')
+      }) + '\n'
+
+      const ok = conn.write(msg)
+
       transfer.sent += chunk.length
-      this._emit(CMD_TRANSFER_PROGRESS, {
-        transferId: transfer.transferId,
-        progress:   transfer.sent / transfer.fileSize
-      })
+      this._emitProgress(transfer)
+
+      if (!ok) {
+        // Pause reading until the connection drains
+        stream.pause()
+        conn.once('drain', () => stream.resume())
+      }
     })
 
     stream.on('end', () => {
-      conn.write(JSON.stringify({ type: 'fileComplete', transferId: transfer.transferId }) + '\n')
-      this._emit(CMD_TRANSFER_COMPLETE, { transferId: transfer.transferId, direction: 'sent' })
+      conn.write(JSON.stringify({
+        type:       'fileComplete',
+        transferId: transfer.transferId
+      }) + '\n')
+
+      this._emitProgress(transfer, true) // force final 100%
+      this._emit(CMD_TRANSFER_COMPLETE, {
+        transferId: transfer.transferId,
+        direction:  'sending'
+      })
       this._transfers.delete(transfer.transferId)
     })
 
     stream.on('error', (err) => {
-      this._emit(CMD_ERROR, { transferId: transfer.transferId, message: err.message })
+      this._emitError(transfer.transferId, err.message)
+      this._transfers.delete(transfer.transferId)
     })
   }
 
   // ─── Receiving ─────────────────────────────────────────────────────────────
 
-  /** Called when a remote peer offers us a file — accept immediately. */
-  onOffer (msg, conn, senderPeerId) {
+  onOffer (msg, conn, senderNoiseKey) {
     const { transferId, fileName, fileSize } = msg
     const downloadPath = this._getDownloadPath()
 
     try { fs.mkdirSync(downloadPath, { recursive: true }) } catch (e) {}
 
+    // Resolve a unique destination path — never silently overwrite
+    const destPath = this._uniquePath(downloadPath, fileName)
+
+    // Open a write stream immediately — chunks go straight to disk, no RAM buffer
+    let writeStream
+    let writeError = null
+    try {
+      writeStream = fs.createWriteStream(destPath)
+    } catch (err) {
+      this._emitError(transferId, 'Cannot open destination: ' + err.message)
+      return { transferId, fileName, fileSize, peerId: senderNoiseKey }
+    }
+
+    writeStream.on('error', (err) => {
+      writeError = err
+      this._emitError(transferId, 'Write error: ' + err.message)
+      this._transfers.delete(transferId)
+    })
+
     this._transfers.set(transferId, {
       transferId,
-      filePath: path.join(downloadPath, fileName),
-      peerId: senderPeerId,
+      destPath,
+      peerId: senderNoiseKey,
       fileName,
       fileSize,
-      received: 0,
-      chunks:   [],
-      active:   true
+      received:       0,
+      writeStream,
+      writeError,
+      lastProgressAt: 0
     })
 
     conn.write(JSON.stringify({ type: 'fileAccept', transferId }) + '\n')
 
-    return { transferId, fileName, fileSize, peerId: senderPeerId }
+    return { transferId, fileName, fileSize, peerId: senderNoiseKey }
   }
 
   onChunk (msg) {
     const transfer = this._transfers.get(msg.transferId)
-    if (!transfer) return
+    if (!transfer || transfer.writeError) return
 
     const chunk = Buffer.from(msg.data, 'base64')
-    transfer.chunks.push(chunk)
-    transfer.received += chunk.length
 
-    this._emit(CMD_TRANSFER_PROGRESS, {
-      transferId: msg.transferId,
-      progress:   transfer.received / transfer.fileSize
-    })
+    // Write to disk — if the write stream signals backpressure we just let it
+    // buffer internally (write stream has its own highWaterMark queue).
+    // For very high throughput you'd pause the conn here too, but for our
+    // use case (local network, single transfer) this is sufficient.
+    transfer.writeStream.write(chunk)
+
+    transfer.received += chunk.length
+    this._emitProgress(transfer)
   }
 
   onComplete (msg) {
     const transfer = this._transfers.get(msg.transferId)
     if (!transfer) return
 
-    fs.writeFileSync(transfer.filePath, Buffer.concat(transfer.chunks))
+    // End the write stream — flushes any buffered data and closes the fd
+    transfer.writeStream.end(() => {
+      if (transfer.writeError) return // already reported
 
-    this._emit(CMD_TRANSFER_COMPLETE, {
-      transferId: msg.transferId,
-      direction:  'received',
-      filePath:   transfer.filePath
+      this._emitProgress(transfer, true) // force 100%
+      this._emit(CMD_TRANSFER_COMPLETE, {
+        transferId: msg.transferId,
+        direction:  'received',
+        filePath:   transfer.destPath,
+        fileName:   transfer.fileName
+      })
+      this._transfers.delete(msg.transferId)
     })
+  }
 
-    this._transfers.delete(msg.transferId)
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+
+  // Throttled progress — emits at most once per PROGRESS_THROTTLE_MS,
+  // plus always emits when forced (start/end).
+  _emitProgress (transfer, force = false) {
+    const now = Date.now()
+    if (!force && now - transfer.lastProgressAt < PROGRESS_THROTTLE_MS) return
+    transfer.lastProgressAt = now
+
+    const total    = transfer.fileSize || 1
+    const done     = transfer.sent ?? transfer.received ?? 0
+    const progress = Math.min(done / total, 1)
+
+    this._emit(CMD_TRANSFER_PROGRESS, {
+      transferId: transfer.transferId,
+      progress
+    })
+  }
+
+  _emitError (transferId, message) {
+    this._emit(CMD_ERROR, { transferId, message })
+  }
+
+  // Returns a path that doesn't already exist.
+  // "photo.jpg" → "photo (2).jpg" → "photo (3).jpg" etc.
+  _uniquePath (dir, fileName) {
+    const ext  = path.extname(fileName)
+    const base = path.basename(fileName, ext)
+    let   dest = path.join(dir, fileName)
+    let   n    = 2
+
+    while (this._fileExists(dest)) {
+      dest = path.join(dir, `${base} (${n})${ext}`)
+      n++
+    }
+
+    return dest
+  }
+
+  _fileExists (filePath) {
+    try { fs.statSync(filePath); return true } catch (e) { return false }
   }
 }
 
