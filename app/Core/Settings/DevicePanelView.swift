@@ -193,14 +193,31 @@ struct DevicePanelView: View {
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         for provider in providers {
-            provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
-                guard
-                    let data = item as? Data,
-                    let url  = URL(dataRepresentation: data, relativeTo: nil)
-                else { return }
-                DispatchQueue.main.async { self.worker.sendFile(at: url, to: self.deviceID) }
+            // Files come as "public.file-url", folders come as "public.folder".
+            // Try file-url first; if the item is a folder it will be nil, then try folder.
+            if provider.hasItemConformingToTypeIdentifier("public.file-url") {
+                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
+                    self.sendDroppedItem(item)
+                }
+            } else if provider.hasItemConformingToTypeIdentifier("public.folder") {
+                provider.loadItem(forTypeIdentifier: "public.folder", options: nil) { item, _ in
+                    self.sendDroppedItem(item)
+                }
             }
         }
         return true
+    }
+
+    private func sendDroppedItem(_ item: NSSecureCoding?) {
+        let url: URL?
+        if let data = item as? Data {
+            url = URL(dataRepresentation: data, relativeTo: nil)
+        } else if let u = item as? URL {
+            url = u
+        } else {
+            return
+        }
+        guard let url else { return }
+        DispatchQueue.main.async { self.worker.sendFile(at: url, to: self.deviceID) }
     }
 }
