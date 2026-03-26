@@ -27,32 +27,59 @@ targets:
         # com.apple.security.application-groups:
         #   - group.to.holepunch.bare.ios
         com.apple.security.cs.allow-jit: true
+        com.apple.security.get-task-allow: true
+        # Hyperswarm: outgoing DHT lookups and peer connections
+        com.apple.security.network.client: true
+        # Hyperswarm: accepting incoming peer connections
+        com.apple.security.network.server: true
+        # File access: writing received files to ~/Downloads/PeerDrop
+        com.apple.security.files.downloads.read-write: true
+        # File access: reading files the user picks/drags to send,
+        # and writing to custom download folders chosen via NSOpenPanel
+        com.apple.security.files.user-selected.read-write: true
+
     dependencies:
       - framework: app/frameworks/BareKit.xcframework
       - package: BareKit
       - package: BareRPC
     sources:
       - path: app/App.swift
-      - path: app/app.js
+      - path: app/README.md
+
+      - path: app/js/app.js
+        group: app/js
+      - path: app/js/transfers.js
+      - path: app/js/store.js
+      - path: app/js/commands.js
+
       - path: app/app.bundle
         optional: true
-      - path: app/ContentView.swift
-      - path: app/Worker.swift
-      - path: app/PeerDevice.swift
-      - path: app/FileTransfer.swift
-      - path: app/README.md
-      - path: app/SettingsView.swift
-      - path: app/transfers.js
-      - path: app/store.js
-      - path: app/commands.js
-      - path: app/Components.swift
-      - path: app/QRCodeView.swift
-      - path: app/TransferRow.swift
-      - path: app/DeviceRow.swift
-      - path: app/Worker+Events.swift
-      - path: app/IPCBridge.swift
-      - path: app/Commands.swift
-      - path: app/DevicePanelController.swift
+      
+      - path: app/Core/Root/ContentView.swift
+        group: app/Core/Root
+
+      - path: app/Core/IPC/Worker.swift
+        group: app/Core/IPC
+      - path: app/Core/IPC/Worker+Events.swift
+      - path: app/Core/IPC/IPCBridge.swift
+      - path: app/Core/IPC/Commands.swift
+      
+      - path: app/Core/Models/PeerDevice.swift
+        group: app/Core/Models
+      - path: app/Core/Models/FileTransfer.swift
+
+      - path: app/Core/Settings/SettingsView.swift
+        group: app/Core/Settings
+      - path: app/Core/Settings/QRCodeView.swift
+      - path: app/Core/Settings/DevicePanelController.swift
+      - path: app/Core/Settings/DevicePanelView.swift
+
+      - path: app/Core/Components/ActionLink.swift
+        group: app/Core/Components
+      - path: app/Core/Components/TransferRow.swift
+      - path: app/Core/Components/DeviceRow.swift
+      - path: app/Core/Components/PanelTransferRow.swift
+      - path: app/Core/Components/SectionHeader.swift
 
     scheme:
       preActions:
@@ -72,4 +99,4 @@ targets:
               --linked \
               --base ${PWD} \
               --out ${PWD}/app/app.bundle \
-              ${PWD}/app/app.js
+              ${PWD}/app/js/app.js
