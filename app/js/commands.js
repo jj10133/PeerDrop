@@ -1,7 +1,8 @@
-// RPC command IDs — must mirror Commands.swift exactly.
+// commands.js — Single source of truth for RPC command IDs.
+// Any change here MUST be mirrored in Commands.swift.
 
 module.exports = {
-  // JS → Swift events
+  // ── JS → Swift events (fire-and-forget) ──────────────────────────────────
   CMD_READY:             1,
   CMD_PEER_CONNECTED:    2,
   CMD_PEER_DISCONNECTED: 3,
@@ -11,7 +12,7 @@ module.exports = {
   CMD_ERROR:             7,
   CMD_SAVED_PEERS:       11,
 
-  // Swift → JS requests
+  // ── Swift → JS requests (expect a reply) ─────────────────────────────────
   CMD_SEND_FILE:         8,
   CMD_CONNECT_PEER:      9,
   CMD_SET_DOWNLOAD_PATH: 10,
