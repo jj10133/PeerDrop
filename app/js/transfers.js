@@ -1,22 +1,25 @@
-// transfers.js — File and directory transfer engine.
+// transfers.js — File and directory transfer engine using protomux binary channels.
 //
-// Single file: unchanged from original — fileOffer → fileChunk × N → fileComplete
+// Protocol:
+//   Control messages (JSON) travel over the shared 'peerdrop/control' channel
+//   managed by app.js. transfers.js only SENDS control signals through controlCh
+//   (fileOffer, batchStart, batchComplete). Receives are dispatched by app.js.
 //
-// Directory (batch):
-//   batchStart   { batchId, dirName, fileCount, totalSize }
-//   fileOffer    { ..., batchId, relativePath }   ← one per file
-//   fileChunk × N
-//   fileComplete
-//   (repeat for each file sequentially)
-//   batchComplete { batchId }
+//   File data travels over per-transfer binary channels:
+//     protocol: 'peerdrop/transfer', id: Buffer.from(transferId)
+//     message[0]: c.buffer  → raw file bytes  (no base64, no JSON)
+//     message[1]: c.json    → { done: true }  completion signal
 //
-// Files in a batch are sent ONE AT A TIME. The next file is offered only
-// after the previous file's stream 'end' fires. This keeps things simple
-// and naturally handles backpressure.
+//   Backpressure: message[0].send() returns mux.drained (bool).
+//   When false, we pause the read stream and resume on the channel's ondrain.
+//
+//   Directory batches send up to MAX_CONCURRENT files simultaneously,
+//   each on its own binary channel.
 
-const crypto = require('hypercore-crypto')
-const fs     = require('bare-fs')
-const path   = require('bare-path')
+const crypto   = require('hypercore-crypto')
+const fs       = require('bare-fs')
+const path     = require('bare-path')
+const c        = require('compact-encoding')
 
 const {
   CMD_TRANSFER_STARTED,
@@ -25,8 +28,9 @@ const {
   CMD_ERROR
 } = require('./commands')
 
-const CHUNK_SIZE        = 1024 * 1024  // 1 MB
-const PROGRESS_THROTTLE = 100          // ms between progress events
+const CHUNK_SIZE        = 1024 * 1024  // 1 MB read buffer
+const PROGRESS_THROTTLE = 100          // ms between UI progress events
+const MAX_CONCURRENT    = 4            // max simultaneous file channels per batch
 
 class TransferManager {
   constructor (emit, getDownloadPath) {
@@ -36,9 +40,9 @@ class TransferManager {
     this._batches         = new Map()  // batchId    → directory state
   }
 
-  // ── Sending ────────────────────────────────────────────────────────────────
+  // ── Public entry point ───────────────────────────────────────────────────────
 
-  offer (filePath, conn, noiseKey) {
+  offer (filePath, mux, controlCh, noiseKey) {
     let stat
     try { stat = fs.statSync(filePath) }
     catch (err) {
@@ -47,16 +51,15 @@ class TransferManager {
     }
 
     if (stat.isDirectory()) {
-      this._offerDirectory(filePath, conn, noiseKey)
+      this._offerDirectory(filePath, mux, controlCh, noiseKey)
     } else {
-      this._offerFile(filePath, conn, noiseKey)
+      this._offerSingleFile(filePath, mux, controlCh, noiseKey, null, null)
     }
   }
 
-  // ── Single file ─────────────────────────────────────────────────────────
+  // ── Single file — sender ─────────────────────────────────────────────────────
 
-  // batchId and relativePath are null for standalone files
-  _offerFile (filePath, conn, noiseKey, batchId, relativePath) {
+  _offerSingleFile (filePath, mux, controlCh, noiseKey, batchId, relativePath) {
     const transferId = crypto.randomBytes(16).toString('hex')
     const fileName   = path.basename(relativePath || filePath)
     let   fileSize
@@ -66,21 +69,22 @@ class TransferManager {
       return null
     }
 
-    conn.write(JSON.stringify({
+    // Announce the file via the shared control channel
+    controlCh.messages[0].send({
       type: 'fileOffer', transferId, fileName, fileSize,
-      isDirectory: false,
+      isDirectory:  false,
       batchId:      batchId      || null,
       relativePath: relativePath || null
-    }) + '\n')
+    })
 
     this._transfers.set(transferId, {
       transferId, filePath, fileName, fileSize,
-      sent: 0, conn, noiseKey,
-      batchId: batchId || null,
+      sent: 0, mux, controlCh, noiseKey,
+      batchId:       batchId || null,
       lastProgressAt: 0
     })
 
-    // Standalone file: emit CMD_TRANSFER_STARTED immediately so the sender UI updates
+    // Notify Swift so the outgoing transfer row appears immediately
     if (!batchId) {
       this._emit(CMD_TRANSFER_STARTED, {
         transferId, fileName, fileSize,
@@ -94,164 +98,79 @@ class TransferManager {
     return transferId
   }
 
-  onAccept (transferId, conn) {
-    const transfer = this._transfers.get(transferId)
-    if (transfer) this._stream(transfer, conn)
+  // Sender: called by app.js when fileAccept arrives — open the binary channel and stream
+  onAccept (transferId, mux) {
+    const t = this._transfers.get(transferId)
+    if (!t) return
+
+    const txCh = mux.createChannel({
+      protocol: 'peerdrop/transfer',
+      id:        Buffer.from(transferId),
+      messages: [
+        { encoding: c.buffer },  // [0] raw file data
+        { encoding: c.json   }   // [1] done signal
+      ],
+      ondrain: () => {},  // handled per-stream in _streamFile
+      onopen:  () => this._streamFile(t, txCh),
+      onclose: () => {}
+    })
+
+    txCh.open()
   }
 
-  _stream (transfer, conn) {
+  _streamFile (transfer, txCh) {
     const stream = fs.createReadStream(transfer.filePath, { highWaterMark: CHUNK_SIZE })
+    const msg0   = txCh.messages[0]
 
     stream.on('data', (chunk) => {
-      const ok = conn.write(JSON.stringify({
-        type:       'fileChunk',
-        transferId: transfer.transferId,
-        data:       chunk.toString('base64')
-      }) + '\n')
-
       transfer.sent += chunk.length
       this._reportSendProgress(transfer)
 
-      if (!ok) {
+      const drained = msg0.send(chunk)  // raw Buffer — no base64, no JSON
+      if (!drained) {
         stream.pause()
-        conn.once('drain', () => stream.resume())
+        // Resume when the underlying mux stream drains
+        txCh._mux.stream.once('drain', () => stream.resume())
       }
     })
 
     stream.on('end', () => {
-      conn.write(JSON.stringify({
-        type: 'fileComplete', transferId: transfer.transferId
-      }) + '\n')
+      txCh.messages[1].send({ done: true })
+      this._reportSendProgress(transfer, true)
 
       if (!transfer.batchId) {
-        // Standalone file — complete
-        this._reportSendProgress(transfer, true)
         this._emit(CMD_TRANSFER_COMPLETE, {
-          transferId: transfer.transferId,
-          direction:  'sending',
+          transferId:  transfer.transferId,
+          direction:   'sending',
           isDirectory: false
         })
         this._transfers.delete(transfer.transferId)
       } else {
-        // Batch file — advance the batch
         this._onBatchFileSent(transfer)
       }
+
+      txCh.close()
     })
 
     stream.on('error', (err) => {
-      const id = transfer.batchId || transfer.transferId
-      this._emit(CMD_ERROR, { transferId: id, message: err.message })
+      this._emit(CMD_ERROR, {
+        transferId: transfer.batchId || transfer.transferId,
+        message:    err.message
+      })
       this._transfers.delete(transfer.transferId)
+      txCh.close()
     })
   }
 
-  // ── Directory ────────────────────────────────────────────────────────────
+  // ── Single file — receiver ───────────────────────────────────────────────────
 
-  _offerDirectory (dirPath, conn, noiseKey) {
-    const batchId   = crypto.randomBytes(16).toString('hex')
-    const dirName   = path.basename(dirPath)
-    const files     = this._walkDir(dirPath)
-    const totalSize = files.reduce((s, f) => s + f.size, 0)
-
-    // Empty directory — start and immediately complete
-    if (files.length === 0) {
-      conn.write(JSON.stringify({
-        type: 'batchStart', batchId, dirName, fileCount: 0, totalSize: 0
-      }) + '\n')
-      conn.write(JSON.stringify({ type: 'batchComplete', batchId }) + '\n')
-      this._emit(CMD_TRANSFER_STARTED, {
-        transferId: batchId, fileName: dirName, fileSize: 0,
-        fileCount: 0, peerId: noiseKey, direction: 'sending', isDirectory: true
-      })
-      this._emit(CMD_TRANSFER_COMPLETE, {
-        transferId: batchId, direction: 'sending', isDirectory: true
-      })
-      return
-    }
-
-    this._batches.set(batchId, {
-      batchId, dirName, totalSize,
-      fileCount: files.length, filesSent: 0,
-      bytesFromDoneFiles: 0,
-      files,               // full array
-      nextFileIndex: 0,    // which file to offer next
-      conn, noiseKey,
-      lastProgressAt: 0
-    })
-
-    // Tell receiver what's coming
-    conn.write(JSON.stringify({
-      type: 'batchStart', batchId, dirName,
-      fileCount: files.length, totalSize
-    }) + '\n')
-
-    // Sender UI row
-    this._emit(CMD_TRANSFER_STARTED, {
-      transferId: batchId, fileName: dirName, fileSize: totalSize,
-      fileCount: files.length, peerId: noiseKey, direction: 'sending', isDirectory: true
-    })
-
-    // Kick off the first file
-    this._offerNextFile(batchId)
-  }
-
-  _offerNextFile (batchId) {
-    const batch = this._batches.get(batchId)
-    if (!batch) return
-    if (batch.nextFileIndex >= batch.files.length) return
-
-    const { fullPath, relativePath } = batch.files[batch.nextFileIndex]
-    batch.nextFileIndex++
-    this._offerFile(fullPath, batch.conn, batch.noiseKey, batchId, relativePath)
-  }
-
-  _onBatchFileSent (transfer) {
-    const batch = this._batches.get(transfer.batchId)
-    if (!batch) return
-
-    batch.filesSent++
-    batch.bytesFromDoneFiles += transfer.fileSize
-    this._transfers.delete(transfer.transferId)
-
-    const progress = Math.min(batch.bytesFromDoneFiles / (batch.totalSize || 1), 0.99)
-    this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress })
-
-    if (batch.filesSent >= batch.fileCount) {
-      // All done — tell receiver
-      batch.conn.write(JSON.stringify({ type: 'batchComplete', batchId: batch.batchId }) + '\n')
-      this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress: 1 })
-      this._emit(CMD_TRANSFER_COMPLETE, {
-        transferId: batch.batchId, direction: 'sending', isDirectory: true
-      })
-      this._batches.delete(batch.batchId)
-    } else {
-      // Offer next file
-      this._offerNextFile(transfer.batchId)
-    }
-  }
-
-  // ── Receiving ──────────────────────────────────────────────────────────────
-
-  onBatchStart (msg, senderNoiseKey) {
-    const { batchId, dirName, fileCount, totalSize } = msg
-    const downloadPath = this._getDownloadPath()
-    const destDir = this._uniquePath(downloadPath, dirName)
-    try { fs.mkdirSync(destDir, { recursive: true }) } catch (_) {}
-
-    this._batches.set(batchId, {
-      batchId, destDir, dirName,
-      fileCount, totalSize,
-      filesReceived: 0, bytesReceived: 0,
-      senderNoiseKey, lastProgressAt: 0
-    })
-  }
-
-  // Returns the info object for standalone files, null for batch files.
-  // app.js uses the return value to decide whether to emit CMD_TRANSFER_STARTED.
-  onOffer (msg, conn, senderNoiseKey) {
+  // Called by app.js on fileOffer. Opens the receiver-side binary channel so
+  // it is ready before app.js sends fileAccept back to the sender.
+  // Returns info object for standalone files, null for batch files.
+  onOffer (msg, mux, senderNoiseKey) {
     const { transferId, fileName, fileSize, batchId, relativePath } = msg
     const downloadPath = this._getDownloadPath()
-    let destPath
+    let   destPath
 
     if (batchId) {
       const batch = this._batches.get(batchId)
@@ -268,49 +187,65 @@ class TransferManager {
     }
 
     const writeStream = this._openWriteStream(transferId, destPath)
-    if (!writeStream) return { transferId, fileName, fileSize, peerId: senderNoiseKey }
+    if (!writeStream) {
+      return batchId ? null : { transferId, fileName, fileSize, peerId: senderNoiseKey }
+    }
 
     this._transfers.set(transferId, {
       transferId, destPath, fileName, fileSize,
-      peerId: senderNoiseKey,
-      received: 0, batchId: batchId || null,
-      writeStream, lastProgressAt: 0
+      peerId:        senderNoiseKey,
+      received:      0,
+      batchId:       batchId || null,
+      writeStream,
+      lastProgressAt: 0
     })
 
-    conn.write(JSON.stringify({ type: 'fileAccept', transferId }) + '\n')
+    // Open receiver channel now — before fileAccept is sent — so both sides
+    // are ready at the same moment and no frames are dropped
+    const rxCh = mux.createChannel({
+      protocol: 'peerdrop/transfer',
+      id:        Buffer.from(transferId),
+      messages: [
+        {
+          encoding:  c.buffer,
+          onmessage: (chunk) => this._onRawChunk(transferId, chunk)
+        },
+        {
+          encoding:  c.json,
+          onmessage: () => this._onTransferComplete(transferId)
+        }
+      ],
+      onclose: () => {}
+    })
+
+    rxCh.open()
 
     return batchId ? null : { transferId, fileName, fileSize, peerId: senderNoiseKey }
   }
 
-  onChunk (msg) {
-    const t = this._transfers.get(msg.transferId)
+  _onRawChunk (transferId, chunk) {
+    const t = this._transfers.get(transferId)
     if (!t?.writeStream) return
 
-    const chunk = Buffer.from(msg.data, 'base64')
     t.writeStream.write(chunk)
     t.received += chunk.length
     this._reportReceiveProgress(t)
   }
 
-  onComplete (msg) {
-    const t = this._transfers.get(msg.transferId)
+  _onTransferComplete (transferId) {
+    const t = this._transfers.get(transferId)
     if (!t?.writeStream) return
 
     t.writeStream.once('finish', () => {
       if (t.batchId) {
-        const batch = this._batches.get(t.batchId)
-        if (batch) {
-          batch.filesReceived++
-          const progress = Math.min(batch.filesReceived / batch.fileCount, 0.99)
-          this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress })
-        }
+        this._onBatchFileReceived(t)
       } else {
         this._reportReceiveProgress(t, true)
         this._emit(CMD_TRANSFER_COMPLETE, {
-          transferId: t.transferId,
-          direction:  'received',
-          filePath:   t.destPath,
-          fileName:   t.fileName,
+          transferId:  t.transferId,
+          direction:   'received',
+          filePath:    t.destPath,
+          fileName:    t.fileName,
           isDirectory: false
         })
       }
@@ -318,6 +253,116 @@ class TransferManager {
     })
 
     t.writeStream.end()
+  }
+
+  // ── Directory — sender ───────────────────────────────────────────────────────
+
+  _offerDirectory (dirPath, mux, controlCh, noiseKey) {
+    const batchId   = crypto.randomBytes(16).toString('hex')
+    const dirName   = path.basename(dirPath)
+    const files     = this._walkDir(dirPath)
+    const totalSize = files.reduce((s, f) => s + f.size, 0)
+
+    if (files.length === 0) {
+      controlCh.messages[0].send({
+        type: 'batchStart', batchId, dirName, fileCount: 0, totalSize: 0
+      })
+      controlCh.messages[0].send({ type: 'batchComplete', batchId })
+      this._emit(CMD_TRANSFER_STARTED, {
+        transferId: batchId, fileName: dirName, fileSize: 0,
+        fileCount: 0, peerId: noiseKey, direction: 'sending', isDirectory: true
+      })
+      this._emit(CMD_TRANSFER_COMPLETE, {
+        transferId: batchId, direction: 'sending', isDirectory: true
+      })
+      return
+    }
+
+    this._batches.set(batchId, {
+      batchId, dirName, totalSize,
+      fileCount: files.length, filesSent: 0,
+      bytesFromDoneFiles: 0,
+      files, nextIndex: 0,
+      activeCount: 0,
+      mux, controlCh, noiseKey,
+      lastProgressAt: 0
+    })
+
+    controlCh.messages[0].send({
+      type: 'batchStart', batchId, dirName,
+      fileCount: files.length, totalSize
+    })
+
+    this._emit(CMD_TRANSFER_STARTED, {
+      transferId: batchId, fileName: dirName, fileSize: totalSize,
+      fileCount: files.length, peerId: noiseKey, direction: 'sending', isDirectory: true
+    })
+
+    // Start up to MAX_CONCURRENT files immediately
+    this._fillBatchSlots(batchId)
+  }
+
+  _fillBatchSlots (batchId) {
+    const batch = this._batches.get(batchId)
+    if (!batch) return
+
+    while (batch.activeCount < MAX_CONCURRENT && batch.nextIndex < batch.files.length) {
+      const { fullPath, relativePath } = batch.files[batch.nextIndex++]
+      batch.activeCount++
+      this._offerSingleFile(fullPath, batch.mux, batch.controlCh, batch.noiseKey, batchId, relativePath)
+    }
+  }
+
+  _onBatchFileSent (transfer) {
+    const batch = this._batches.get(transfer.batchId)
+    if (!batch) return
+
+    batch.filesSent++
+    batch.activeCount--
+    batch.bytesFromDoneFiles += transfer.fileSize
+    this._transfers.delete(transfer.transferId)
+
+    const progress = Math.min(batch.bytesFromDoneFiles / (batch.totalSize || 1), 0.99)
+    this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress })
+
+    if (batch.filesSent >= batch.fileCount) {
+      // All done — tell the receiver
+      batch.controlCh.messages[0].send({ type: 'batchComplete', batchId: batch.batchId })
+      this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress: 1 })
+      this._emit(CMD_TRANSFER_COMPLETE, {
+        transferId: batch.batchId, direction: 'sending', isDirectory: true
+      })
+      this._batches.delete(batch.batchId)
+    } else {
+      // Free up a concurrency slot — offer the next file
+      this._fillBatchSlots(transfer.batchId)
+    }
+  }
+
+  // ── Directory — receiver ─────────────────────────────────────────────────────
+
+  onBatchStart (msg, senderNoiseKey) {
+    const { batchId, dirName, fileCount, totalSize } = msg
+    const downloadPath = this._getDownloadPath()
+    const destDir = this._uniquePath(downloadPath, dirName)
+    try { fs.mkdirSync(destDir, { recursive: true }) } catch (_) {}
+
+    this._batches.set(batchId, {
+      batchId, destDir, dirName,
+      fileCount, totalSize,
+      filesReceived: 0,
+      senderNoiseKey,
+      lastProgressAt: 0
+    })
+  }
+
+  _onBatchFileReceived (t) {
+    const batch = this._batches.get(t.batchId)
+    if (!batch) return
+
+    batch.filesReceived++
+    const progress = Math.min(batch.filesReceived / batch.fileCount, 0.99)
+    this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress })
   }
 
   onBatchComplete (msg) {
@@ -335,7 +380,7 @@ class TransferManager {
     this._batches.delete(msg.batchId)
   }
 
-  // ── Progress helpers ───────────────────────────────────────────────────────
+  // ── Progress reporting ───────────────────────────────────────────────────────
 
   _reportSendProgress (transfer, force = false) {
     const now = Date.now()
@@ -344,37 +389,37 @@ class TransferManager {
 
     if (transfer.batchId) {
       const batch = this._batches.get(transfer.batchId)
-      if (batch) {
-        const done = batch.bytesFromDoneFiles + transfer.sent
-        const progress = Math.min(done / (batch.totalSize || 1), 0.99)
-        this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress })
-      }
+      if (!batch) return
+      const done     = batch.bytesFromDoneFiles + transfer.sent
+      const progress = Math.min(done / (batch.totalSize || 1), 0.99)
+      this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress })
     } else {
       const progress = Math.min(transfer.sent / (transfer.fileSize || 1), 1)
       this._emit(CMD_TRANSFER_PROGRESS, { transferId: transfer.transferId, progress })
     }
   }
 
-  _reportReceiveProgress (transfer, force = false) {
+  _reportReceiveProgress (t, force = false) {
     const now = Date.now()
-    if (!force && now - transfer.lastProgressAt < PROGRESS_THROTTLE) return
-    transfer.lastProgressAt = now
+    if (!force && now - t.lastProgressAt < PROGRESS_THROTTLE) return
+    t.lastProgressAt = now
 
-    if (transfer.batchId) {
-      const batch = this._batches.get(transfer.batchId)
-      if (batch) {
-        batch.bytesReceived += 0  // updated in onChunk via t.received
-        const progress = Math.min(transfer.received / (transfer.fileSize || 1), 0.99)
-        // Use per-file progress as a proxy — batches use filesReceived in onComplete
-        this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress: progress * (1 / batch.fileCount) })
-      }
+    if (t.batchId) {
+      const batch = this._batches.get(t.batchId)
+      if (!batch) return
+      // Approximate: completed files + fraction of current file
+      const progress = Math.min(
+        (batch.filesReceived + (t.received / (t.fileSize || 1))) / batch.fileCount,
+        0.99
+      )
+      this._emit(CMD_TRANSFER_PROGRESS, { transferId: batch.batchId, progress })
     } else {
-      const progress = Math.min(transfer.received / (transfer.fileSize || 1), 1)
-      this._emit(CMD_TRANSFER_PROGRESS, { transferId: transfer.transferId, progress })
+      const progress = Math.min(t.received / (t.fileSize || 1), 1)
+      this._emit(CMD_TRANSFER_PROGRESS, { transferId: t.transferId, progress })
     }
   }
 
-  // ── Utilities ──────────────────────────────────────────────────────────────
+  // ── Utilities ────────────────────────────────────────────────────────────────
 
   _openWriteStream (transferId, destPath) {
     try {
@@ -390,17 +435,16 @@ class TransferManager {
     }
   }
 
-  // Walk directory, return flat list skipping hidden files
+  // Walk directory, returning flat list of files with paths relative to dirPath
   _walkDir (dirPath) {
     const results = []
-    const base    = dirPath  // relative paths are INSIDE the folder, not including it
 
     const walk = (dir) => {
       let entries
       try { entries = fs.readdirSync(dir) } catch (_) { return }
 
       for (const entry of entries) {
-        if (entry.startsWith('.')) continue
+        if (entry.startsWith('.')) continue  // skip .DS_Store, hidden files
 
         const full = path.join(dir, entry)
         let stat
@@ -411,7 +455,7 @@ class TransferManager {
         } else {
           results.push({
             fullPath:     full,
-            relativePath: path.relative(base, full),
+            relativePath: path.relative(dirPath, full),  // relative to inside the folder
             size:         stat.size
           })
         }

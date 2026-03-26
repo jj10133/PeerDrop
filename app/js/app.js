@@ -1,4 +1,20 @@
+// app.js — PeerDrop orchestrator with protomux multiplexing.
+//
+// Each Hyperswarm connection gets one Protomux with two channel types:
+//
+//   protocol: 'peerdrop/control'
+//     Opens immediately on connect. Carries all signalling as JSON:
+//     handshake, fileOffer, fileAccept, fileComplete,
+//     batchStart, batchComplete.
+//
+//   protocol: 'peerdrop/transfer', id: Buffer(transferId)
+//     One per active file transfer. Carries raw binary file bytes — no
+//     base64, no JSON wrapper. Opened by the sender after fileAccept is
+//     received; closed automatically when streaming finishes.
+
 const Hyperswarm = require('hyperswarm')
+const Protomux   = require('protomux')
+const c          = require('compact-encoding')
 const os         = require('bare-os')
 const RPC        = require('bare-rpc')
 
@@ -17,7 +33,7 @@ class PeerDrop {
     this.swarm              = null
     this.discoveryPublicKey = null
 
-    // noiseKeyHex → { conn, discoveryKey, displayName, platform, isOwnDevice }
+    // noiseKeyHex → { mux, controlCh, discoveryKey, displayName, platform, isOwnDevice }
     this.peers = new Map()
 
     this.rpc = new RPC(BareKit.IPC, (req) => this._onRequest(req))
@@ -29,7 +45,7 @@ class PeerDrop {
     this._init()
   }
 
-  // ─── Init ──────────────────────────────────────────────────────────────────
+  // ── Boot ────────────────────────────────────────────────────────────────────
 
   async _init () {
     const { discoveryPublicKey } = await store.loadIdentity()
@@ -48,11 +64,10 @@ class PeerDrop {
       peerID:       this.discoveryPublicKey.toString('hex'),
       downloadPath: store.getDownloadPath()
     })
-
     this._emitSavedPeers()
   }
 
-  // ─── Swift → JS ────────────────────────────────────────────────────────────
+  // ── Swift → JS ───────────────────────────────────────────────────────────────
 
   _onRequest (req) {
     if (req.id === undefined) return
@@ -79,11 +94,11 @@ class PeerDrop {
     }
   }
 
-  // ─── Peer management ───────────────────────────────────────────────────────
+  // ── Peer management ──────────────────────────────────────────────────────────
 
   async _connectToPeer (discoveryKeyHex) {
     if (!/^[0-9a-f]{64}$/i.test(discoveryKeyHex)) {
-      throw new Error('Invalid Peer ID — must be a 64-character hex string')
+      throw new Error('Invalid Peer ID — must be 64 hex characters')
     }
     store.upsertSavedPeer(discoveryKeyHex)
     this._joinTopic(discoveryKeyHex)
@@ -91,7 +106,7 @@ class PeerDrop {
   }
 
   _forgetPeer (discoveryKeyHex) {
-    try { this.swarm.leave(Buffer.from(discoveryKeyHex, 'hex')) } catch (e) {}
+    try { this.swarm.leave(Buffer.from(discoveryKeyHex, 'hex')) } catch (_) {}
     store.removeSavedPeer(discoveryKeyHex)
     this._emitSavedPeers()
   }
@@ -100,52 +115,68 @@ class PeerDrop {
     this.swarm.join(Buffer.from(hex, 'hex'), { server: false, client: true })
   }
 
-  // ─── Connection handling ───────────────────────────────────────────────────
+  // ── Connection setup ─────────────────────────────────────────────────────────
 
   _onConnection (conn, info) {
     const noiseKeyHex = info.publicKey.toString('hex')
+    const mux         = new Protomux(conn)
 
-    conn.write(JSON.stringify({
-      type:         'handshake',
-      discoveryKey: this.discoveryPublicKey.toString('hex'),
-      displayName:  os.hostname(),
-      platform:     os.platform()
-    }) + '\n')
+    // Store peer entry early so _onControlMessage can update it
+    this.peers.set(noiseKeyHex, {
+      mux, controlCh: null,
+      discoveryKey: null, displayName: null, platform: null, isOwnDevice: false
+    })
 
-    let buf = ''
-    conn.on('data', (data) => {
-      buf += data.toString()
-      const lines = buf.split('\n')
-      buf = lines.pop()
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try { this._onPeerMessage(conn, noiseKeyHex, JSON.parse(line)) }
-        catch (e) { console.error('Parse error:', e) }
+    const controlCh = mux.createChannel({
+      protocol: 'peerdrop/control',
+      messages: [
+        {
+          // message[0]: all signalling, JSON encoded
+          encoding:  c.json,
+          onmessage: (msg) => this._onControlMessage(mux, noiseKeyHex, msg)
+        }
+      ],
+      onopen: () => {
+        // Introduce ourselves as soon as the channel is established
+        controlCh.messages[0].send({
+          type:         'handshake',
+          discoveryKey: this.discoveryPublicKey.toString('hex'),
+          displayName:  os.hostname(),
+          platform:     os.platform()
+        })
+      },
+      onclose: () => {
+        const peer = this.peers.get(noiseKeyHex)
+        this.peers.delete(noiseKeyHex)
+        this._emit(CMD_PEER_DISCONNECTED, {
+          noiseKey:     noiseKeyHex,
+          discoveryKey: peer?.discoveryKey ?? null
+        })
       }
     })
 
-    conn.on('close', () => {
-      const peer = this.peers.get(noiseKeyHex)
-      this.peers.delete(noiseKeyHex)
-      this._emit(CMD_PEER_DISCONNECTED, {
-        noiseKey:     noiseKeyHex,
-        discoveryKey: peer?.discoveryKey ?? null
-      })
-    })
+    this.peers.get(noiseKeyHex).controlCh = controlCh
+    controlCh.open()
 
-    conn.on('error', (err) => console.error('Connection error:', err))
+    conn.on('error', (err) => console.error('Connection error:', err.message))
   }
 
-  _onPeerMessage (conn, noiseKeyHex, msg) {
+  // ── Control message router ───────────────────────────────────────────────────
+
+  _onControlMessage (mux, noiseKeyHex, msg) {
     switch (msg.type) {
 
       case 'handshake': {
         const { discoveryKey, displayName, platform } = msg
         const isOwnDevice = discoveryKey === this.discoveryPublicKey.toString('hex')
 
-        this.peers.set(noiseKeyHex, {
-          conn, discoveryKey, displayName, platform, isOwnDevice, lastSeen: Date.now()
-        })
+        const peer = this.peers.get(noiseKeyHex)
+        if (peer) {
+          peer.discoveryKey = discoveryKey
+          peer.displayName  = displayName
+          peer.platform     = platform
+          peer.isOwnDevice  = isOwnDevice
+        }
 
         if (!isOwnDevice) {
           store.upsertSavedPeer(discoveryKey, { displayName, platform, lastSeen: Date.now() })
@@ -158,7 +189,6 @@ class PeerDrop {
         break
       }
 
-      // ── Receiver: directory batch starting ──────────────────────────────
       case 'batchStart': {
         this.transfers.onBatchStart(msg, noiseKeyHex)
         this._emit(CMD_TRANSFER_STARTED, {
@@ -173,47 +203,65 @@ class PeerDrop {
         break
       }
 
-      // ── Receiver: individual file offer (standalone or part of batch) ───
       case 'fileOffer': {
-        const info = this.transfers.onOffer(msg, conn, noiseKeyHex)
-        // info is null for batch files (batch row already covers them in UI)
-        if (info) {
+        // Receiver: open the binary data channel first, then accept.
+        // This ensures rxCh is ready before sender opens its txCh.
+        const peer = this.peers.get(noiseKeyHex)
+        const info = this.transfers.onOffer(msg, mux, noiseKeyHex)
+
+        // Always send fileAccept via the control channel
+        if (peer?.controlCh) {
+          peer.controlCh.messages[0].send({ type: 'fileAccept', transferId: msg.transferId })
+        }
+
+        // Emit CMD_TRANSFER_STARTED only for standalone files (batch handled via batchStart)
+        if (info && !msg.batchId) {
           this._emit(CMD_TRANSFER_STARTED, {
-            ...info,
+            transferId:  info.transferId,
+            fileName:    info.fileName,
+            fileSize:    info.fileSize,
+            peerId:      info.peerId,
             direction:   'receiving',
-            isDirectory: false
+            isDirectory: false,
+            fileCount:   0
           })
         }
         break
       }
 
-      case 'fileAccept':    this.transfers.onAccept(msg.transferId, conn); break
-      case 'fileChunk':     this.transfers.onChunk(msg);                   break
-      case 'fileComplete':  this.transfers.onComplete(msg);                break
-      case 'batchComplete': this.transfers.onBatchComplete(msg);           break
+      case 'fileAccept':
+        // Sender side: open the binary transfer channel and start streaming
+        this.transfers.onAccept(msg.transferId, mux)
+        break
+
+      case 'fileComplete':
+        this.transfers.onComplete(msg)
+        break
+
+      case 'batchComplete':
+        this.transfers.onBatchComplete(msg)
+        break
     }
   }
 
-  // ─── Sending ───────────────────────────────────────────────────────────────
+  // ── Sending ──────────────────────────────────────────────────────────────────
 
   async _sendFile (filePath, discoveryKey) {
-    const result = this._liveConn(discoveryKey)
-    if (!result) throw new Error('Peer not connected: ' + discoveryKey)
-    // Pass noiseKey so transfers.js can tag CMD_TRANSFER_STARTED with the
-    // right peerId — DevicePanelView uses it to filter the transfer to the
-    // correct panel via worker.noiseToDiscovery
-    this.transfers.offer(filePath, result.conn, result.noiseKey)
+    const peer = this._livePeer(discoveryKey)
+    if (!peer) throw new Error('Peer not connected: ' + discoveryKey)
+    this.transfers.offer(filePath, peer.mux, peer.controlCh, peer.noiseKey)
   }
 
-  // Returns { conn, noiseKey } for the first live connection to this peer
-  _liveConn (discoveryKey) {
+  _livePeer (discoveryKey) {
     for (const [noiseKey, peer] of this.peers.entries()) {
-      if (peer.discoveryKey === discoveryKey) return { conn: peer.conn, noiseKey }
+      if (peer.discoveryKey === discoveryKey) {
+        return { ...peer, noiseKey }
+      }
     }
     return null
   }
 
-  // ─── Helpers ───────────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────────
 
   _emitSavedPeers () {
     this._emit(CMD_SAVED_PEERS, { peers: store.loadSavedPeers() })
