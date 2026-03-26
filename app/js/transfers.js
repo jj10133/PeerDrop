@@ -393,7 +393,7 @@ class TransferManager {
   // Walk directory, return flat list skipping hidden files
   _walkDir (dirPath) {
     const results = []
-    const base    = path.dirname(dirPath)
+    const base    = dirPath  // relative paths are INSIDE the folder, not including it
 
     const walk = (dir) => {
       let entries
