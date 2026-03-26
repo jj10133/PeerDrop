@@ -1,14 +1,19 @@
+// Worker+Events.swift — Handles all inbound RPC events from the JS runtime.
+//
+// Each handler has one job: parse the payload and update Worker's published state.
+// No business logic here — just mapping JS data → Swift models.
+
 import BareRPC
 import Foundation
 
 extension Worker {
 
+    // MARK: - Setup
+
     func setupEventHandlers() {
-        bridge.rpc.onEvent = { [weak self] event in
-            await self?.handleEvent(event)
-        }
+        bridge.rpc.onEvent   = { [weak self] event in await self?.handleEvent(event) }
         bridge.rpc.onRequest = { req in req.reply(nil) }
-        bridge.rpc.onError   = { error in print("❌ RPC: \(error)") }
+        bridge.rpc.onError   = { error in print("❌ RPC error: \(error)") }
     }
 
     // MARK: - Dispatch
@@ -36,36 +41,34 @@ extension Worker {
 
     private func onReady(_ data: [String: Any]) {
         guard let peerID = data["peerID"] as? String else { return }
-        let dl = data["downloadPath"] as? String ?? ""
+        let downloadPath = data["downloadPath"] as? String ?? ""
         DispatchQueue.main.async {
             self.myPeerID     = peerID
-            self.downloadPath = dl
+            self.downloadPath = downloadPath
         }
     }
 
+    // Full roster sync from JS. Preserves isOnline for currently live peers.
     private func onSavedPeers(_ data: [String: Any]) {
         guard let peers = data["peers"] as? [[String: Any]] else { return }
-
         DispatchQueue.main.async {
-            self.knownDevices = peers.compactMap { p in
-                guard let dk = p["discoveryKey"] as? String else { return nil }
-                let name     = p["displayName"] as? String
-                let platform = p["platform"]    as? String
-
-                // Preserve online status for currently live connections
-                let isOnline    = self.knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
-                let isOwnDevice = dk == self.myPeerID
-
-                return PeerDevice(
-                    id:           dk,
-                    discoveryKey: dk,
-                    name:         name ?? String(dk.prefix(12)) + "...",
-                    systemImage:  self.systemImage(for: platform ?? ""),
-                    isOnline:     isOnline,
-                    isOwnDevice:  isOwnDevice
-                )
-            }
+            self.knownDevices = peers.compactMap { self.makePeerDevice(from: $0) }
         }
+    }
+
+    private func makePeerDevice(from p: [String: Any]) -> PeerDevice? {
+        guard let dk = p["discoveryKey"] as? String else { return nil }
+        let name     = p["displayName"] as? String
+        let platform = p["platform"]    as? String
+        let isOnline = knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
+        return PeerDevice(
+            id:           dk,
+            discoveryKey: dk,
+            name:         name ?? String(dk.prefix(12)) + "...",
+            systemImage:  systemImage(for: platform ?? ""),
+            isOnline:     isOnline,
+            isOwnDevice:  dk == myPeerID
+        )
     }
 
     private func onPeerConnected(_ data: [String: Any]) {
@@ -80,8 +83,7 @@ extension Worker {
 
         DispatchQueue.main.async {
             self.noiseToDiscovery[noiseKey] = discoveryKey
-
-            let updated = PeerDevice(
+            let device = PeerDevice(
                 id:           discoveryKey,
                 discoveryKey: discoveryKey,
                 name:         displayName,
@@ -89,31 +91,23 @@ extension Worker {
                 isOnline:     true,
                 isOwnDevice:  isOwnDevice
             )
-
             if let i = self.knownDevices.firstIndex(where: { $0.id == discoveryKey }) {
-                self.knownDevices[i] = updated
+                self.knownDevices[i] = device
             } else {
-                self.knownDevices.append(updated)
+                self.knownDevices.append(device)
             }
         }
     }
 
     private func onPeerDisconnected(_ data: [String: Any]) {
         guard let noiseKey = data["noiseKey"] as? String else { return }
-
         DispatchQueue.main.async {
             guard let dk = self.noiseToDiscovery.removeValue(forKey: noiseKey) else { return }
-
             if let i = self.knownDevices.firstIndex(where: { $0.id == dk }) {
-                let d = self.knownDevices[i]
-                self.knownDevices[i] = PeerDevice(
-                    id:           d.id,
-                    discoveryKey: d.discoveryKey,
-                    name:         d.name,
-                    systemImage:  d.systemImage,
-                    isOnline:     false,
-                    isOwnDevice:  d.isOwnDevice
-                )
+                var d = self.knownDevices[i]
+                d = PeerDevice(id: d.id, discoveryKey: d.discoveryKey, name: d.name,
+                               systemImage: d.systemImage, isOnline: false, isOwnDevice: d.isOwnDevice)
+                self.knownDevices[i] = d
             }
         }
     }
@@ -127,13 +121,12 @@ extension Worker {
             let direction = data["direction"]  as? String
         else { return }
 
-        DispatchQueue.main.async {
-            self.activeTransfers.append(FileTransfer(
-                id: id, peerId: peerId, fileName: fileName,
-                fileSize: Int64(fileSize), progress: 0,
-                direction: direction == "receiving" ? .receiving : .sending
-            ))
-        }
+        let transfer = FileTransfer(
+            id: id, peerId: peerId, fileName: fileName,
+            fileSize: Int64(fileSize), progress: 0,
+            direction: direction == "receiving" ? .receiving : .sending
+        )
+        DispatchQueue.main.async { self.activeTransfers.append(transfer) }
     }
 
     private func onTransferProgress(_ data: [String: Any]) {
@@ -144,9 +137,7 @@ extension Worker {
 
         DispatchQueue.main.async {
             if let i = self.activeTransfers.firstIndex(where: { $0.id == id }) {
-                var t = self.activeTransfers[i]
-                t.progress = progress
-                self.activeTransfers[i] = t
+                self.activeTransfers[i].progress = progress
             }
         }
     }
@@ -154,21 +145,23 @@ extension Worker {
     private func onTransferComplete(_ data: [String: Any]) {
         guard let id = data["transferId"] as? String else { return }
         DispatchQueue.main.async {
+            // Show notification before removing the entry
             if let t = self.activeTransfers.first(where: { $0.id == id }) {
                 self.showNotification(
                     title: t.direction == .receiving ? "File Received" : "File Sent",
                     body:  t.direction == .receiving
-                        ? "\(t.fileName) saved to downloads folder"
+                        ? "\(t.fileName) saved to Downloads"
                         : "\(t.fileName) sent successfully"
                 )
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            // Brief delay so the user sees 100% before the row disappears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 self.activeTransfers.removeAll { $0.id == id }
             }
         }
     }
 
     private func onError(_ data: [String: Any]) {
-        if let msg = data["message"] as? String { print("❌ JS: \(msg)") }
+        if let msg = data["message"] as? String { print("❌ JS error: \(msg)") }
     }
 }
