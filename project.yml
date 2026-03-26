@@ -44,7 +44,6 @@ targets:
       - package: BareRPC
     sources:
       - path: app/App.swift
-      - path: app/README.md
 
       - path: app/js/app.js
         group: app/js
@@ -54,7 +53,7 @@ targets:
 
       - path: app/app.bundle
         optional: true
-      
+
       - path: app/Core/Root/ContentView.swift
         group: app/Core/Root
 
@@ -63,7 +62,7 @@ targets:
       - path: app/Core/IPC/Worker+Events.swift
       - path: app/Core/IPC/IPCBridge.swift
       - path: app/Core/IPC/Commands.swift
-      
+
       - path: app/Core/Models/PeerDevice.swift
         group: app/Core/Models
       - path: app/Core/Models/FileTransfer.swift
