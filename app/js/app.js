@@ -169,15 +169,33 @@ class PeerDrop {
         break
       }
 
+      case 'batchStart':
+        this.transfers.onBatchStart(msg)
+        // Notify Swift — one transfer row for the whole directory
+        this._emit(CMD_TRANSFER_STARTED, {
+          transferId:  msg.batchId,
+          fileName:    msg.dirName,
+          fileSize:    msg.totalSize,
+          fileCount:   msg.fileCount,
+          peerId:      noiseKey,
+          direction:   'receiving',
+          isDirectory: true
+        })
+        break
+
       case 'fileOffer': {
+        // Returns null for batch files (batch row already started above)
         const info = this.transfers.onOffer(msg, conn, noiseKey)
-        this._emit(CMD_TRANSFER_STARTED, { ...info, direction: 'receiving' })
+        if (info) {
+          this._emit(CMD_TRANSFER_STARTED, { ...info, direction: 'receiving', isDirectory: false })
+        }
         break
       }
 
-      case 'fileAccept':   this.transfers.onAccept(msg.transferId, conn); break
-      case 'fileChunk':    this.transfers.onChunk(msg);                   break
-      case 'fileComplete': this.transfers.onComplete(msg);                break
+      case 'fileAccept':    this.transfers.onAccept(msg.transferId, conn);  break
+      case 'fileChunk':     this.transfers.onChunk(msg);                    break
+      case 'fileComplete':  this.transfers.onComplete(msg);                 break
+      case 'batchComplete': this.transfers.onBatchComplete(msg);            break
     }
   }
 
@@ -186,7 +204,7 @@ class PeerDrop {
   async _sendFile (filePath, discoveryKey) {
     const result = this._liveConn(discoveryKey)
     if (!result) throw new Error('Peer not connected: ' + discoveryKey)
-    // Pass noiseKey so TransferManager can tag the transfer for UI filtering
+    // TransferManager.offer() detects isDirectory automatically
     this.transfers.offer(filePath, result.conn, result.noiseKey)
   }
 

@@ -79,7 +79,7 @@ struct DevicePanelView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 180)
         .padding(16)
-        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+        .onDrop(of: [.fileURL, .folder], isTargeted: $isTargeted) { providers in
             guard device.isOnline else { return false }
             return handleDrop(providers)
         }
@@ -110,7 +110,7 @@ struct DevicePanelView: View {
                 .foregroundColor(isTargeted ? .blue : .secondary)
 
             if device.isOnline {
-                Text("Supports any file type or folder")
+                Text("Drop any file or folder")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary.opacity(0.7))
             }
@@ -134,7 +134,7 @@ struct DevicePanelView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(isTargeted ? Color.blue.opacity(0.06) : Color.primary.opacity(0.02))
-            .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+            .onDrop(of: [.fileURL, .folder], isTargeted: $isTargeted) { providers in
                 guard device.isOnline else { return false }
                 return handleDrop(providers)
             }

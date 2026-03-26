@@ -8,6 +8,13 @@ struct PanelTransferRow: View {
     private var isSending: Bool { transfer.direction == .sending }
     private var color: Color    { isSending ? .blue : .green }
 
+    private var icon: String {
+        if transfer.isDirectory {
+            return isSending ? "folder.fill.badge.plus" : "folder.badge.arrow.down"
+        }
+        return isSending ? "arrow.up.circle.fill" : "arrow.down.circle.fill"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             topRow
@@ -22,7 +29,7 @@ struct PanelTransferRow: View {
 
     private var topRow: some View {
         HStack(spacing: 8) {
-            Image(systemName: isSending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+            Image(systemName: icon)
                 .font(.system(size: 14))
                 .foregroundColor(color)
             Text(transfer.fileName)
@@ -52,7 +59,7 @@ struct PanelTransferRow: View {
 
     private var bottomRow: some View {
         HStack {
-            Text(transfer.formattedSize)
+            Text(transfer.subtitle)
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Spacer()

@@ -1,17 +1,35 @@
-// TransferRow.swift — Compact transfer row shown in the main window's ACTIVE TRANSFERS section.
+// TransferRow.swift — Compact transfer row in the main window's ACTIVE TRANSFERS section.
 
 import SwiftUI
 
 struct TransferRow: View {
     let transfer: FileTransfer
 
-    private var isSending: Bool  { transfer.direction == .sending }
-    private var color: Color     { isSending ? .blue : .green }
+    private var isSending: Bool { transfer.direction == .sending }
+    private var color: Color    { isSending ? .blue : .green }
+
+    private var icon: String {
+        if transfer.isDirectory {
+            return isSending ? "folder.fill.badge.plus" : "folder.badge.arrow.down"
+        }
+        return isSending ? "arrow.up.circle.fill" : "arrow.down.circle.fill"
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            directionIcon
-            transferInfo
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundColor(color)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(transfer.fileName)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Text(transfer.subtitle)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+
             Spacer()
         }
         .padding(.horizontal, 10)
@@ -20,34 +38,7 @@ struct TransferRow: View {
         .cornerRadius(10)
         .overlay(RoundedRectangle(cornerRadius: 10)
             .stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
-        // Progress shown as a translucent background fill
         .overlay(progressFill)
-    }
-
-    private var directionIcon: some View {
-        Image(systemName: isSending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-            .font(.system(size: 16))
-            .foregroundColor(color)
-    }
-
-    private var transferInfo: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(transfer.fileName)
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-
-            HStack(spacing: 6) {
-                Text("\(transfer.progressPercentage)%")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Text("·")
-                    .font(.system(size: 8))
-                    .foregroundColor(.secondary)
-                Text(transfer.formattedSize)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-        }
     }
 
     private var progressFill: some View {

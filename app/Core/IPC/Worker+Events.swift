@@ -121,10 +121,15 @@ extension Worker {
             let direction = data["direction"]  as? String
         else { return }
 
+        let isDirectory = data["isDirectory"] as? Bool ?? false
+        let fileCount   = data["fileCount"]   as? Int  ?? 0
+
         let transfer = FileTransfer(
             id: id, peerId: peerId, fileName: fileName,
             fileSize: Int64(fileSize), progress: 0,
-            direction: direction == "receiving" ? .receiving : .sending
+            direction:   direction == "receiving" ? .receiving : .sending,
+            isDirectory: isDirectory,
+            fileCount:   fileCount
         )
         DispatchQueue.main.async { self.activeTransfers.append(transfer) }
     }
@@ -147,8 +152,9 @@ extension Worker {
         DispatchQueue.main.async {
             // Show notification before removing the entry
             if let t = self.activeTransfers.first(where: { $0.id == id }) {
+                let noun = t.isDirectory ? "Folder" : "File"
                 self.showNotification(
-                    title: t.direction == .receiving ? "File Received" : "File Sent",
+                    title: t.direction == .receiving ? "\(noun) Received" : "\(noun) Sent",
                     body:  t.direction == .receiving
                         ? "\(t.fileName) saved to Downloads"
                         : "\(t.fileName) sent successfully"
