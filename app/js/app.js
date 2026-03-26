@@ -1,11 +1,3 @@
-// app.js — Orchestrator. Wires Hyperswarm connections to the RPC bridge.
-//
-// Responsibilities:
-//   • Boot identity and swarm
-//   • Route Swift→JS RPC commands to the right handler
-//   • Manage peer connections (handshake, disconnect, saved peers)
-//   • Delegate file transfers entirely to TransferManager
-
 const Hyperswarm = require('hyperswarm')
 const os         = require('bare-os')
 const RPC        = require('bare-rpc')
@@ -37,7 +29,7 @@ class PeerDrop {
     this._init()
   }
 
-  // ── Boot ────────────────────────────────────────────────────────────────────
+  // ─── Init ──────────────────────────────────────────────────────────────────
 
   async _init () {
     const { discoveryPublicKey } = await store.loadIdentity()
@@ -46,7 +38,6 @@ class PeerDrop {
     this.swarm = new Hyperswarm()
     this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
 
-    // server+client so own devices (same discoveryKey) find each other too
     this.swarm.join(this.discoveryPublicKey, { server: true, client: true })
 
     for (const peer of store.loadSavedPeers()) {
@@ -61,14 +52,12 @@ class PeerDrop {
     this._emitSavedPeers()
   }
 
-  // ── Swift → JS request router ───────────────────────────────────────────────
+  // ─── Swift → JS ────────────────────────────────────────────────────────────
 
   _onRequest (req) {
     if (req.id === undefined) return
     const body  = req.data ? JSON.parse(req.data.toString()) : {}
-    const reply = (err) => err
-      ? req.reply(Buffer.from(String(err.message ?? err)))
-      : req.reply()
+    const reply = (err) => err ? req.reply(Buffer.from(err.message)) : req.reply()
 
     switch (req.command) {
       case CMD_SEND_FILE:
@@ -90,11 +79,11 @@ class PeerDrop {
     }
   }
 
-  // ── Peer management ─────────────────────────────────────────────────────────
+  // ─── Peer management ───────────────────────────────────────────────────────
 
   async _connectToPeer (discoveryKeyHex) {
     if (!/^[0-9a-f]{64}$/i.test(discoveryKeyHex)) {
-      throw new Error('Invalid Peer ID — must be 64 hex characters')
+      throw new Error('Invalid Peer ID — must be a 64-character hex string')
     }
     store.upsertSavedPeer(discoveryKeyHex)
     this._joinTopic(discoveryKeyHex)
@@ -102,7 +91,7 @@ class PeerDrop {
   }
 
   _forgetPeer (discoveryKeyHex) {
-    try { this.swarm.leave(Buffer.from(discoveryKeyHex, 'hex')) } catch (_) {}
+    try { this.swarm.leave(Buffer.from(discoveryKeyHex, 'hex')) } catch (e) {}
     store.removeSavedPeer(discoveryKeyHex)
     this._emitSavedPeers()
   }
@@ -111,10 +100,10 @@ class PeerDrop {
     this.swarm.join(Buffer.from(hex, 'hex'), { server: false, client: true })
   }
 
-  // ── Connection lifecycle ─────────────────────────────────────────────────────
+  // ─── Connection handling ───────────────────────────────────────────────────
 
   _onConnection (conn, info) {
-    const noiseKey = info.publicKey.toString('hex')
+    const noiseKeyHex = info.publicKey.toString('hex')
 
     conn.write(JSON.stringify({
       type:         'handshake',
@@ -124,37 +113,37 @@ class PeerDrop {
     }) + '\n')
 
     let buf = ''
-    conn.on('data', (chunk) => {
-      buf += chunk.toString()
+    conn.on('data', (data) => {
+      buf += data.toString()
       const lines = buf.split('\n')
-      buf = lines.pop()                        // keep incomplete last line
+      buf = lines.pop()
       for (const line of lines) {
         if (!line.trim()) continue
-        try { this._onPeerMessage(conn, noiseKey, JSON.parse(line)) }
-        catch (e) { console.error('Message parse error:', e.message) }
+        try { this._onPeerMessage(conn, noiseKeyHex, JSON.parse(line)) }
+        catch (e) { console.error('Parse error:', e) }
       }
     })
 
     conn.on('close', () => {
-      const peer = this.peers.get(noiseKey)
-      this.peers.delete(noiseKey)
+      const peer = this.peers.get(noiseKeyHex)
+      this.peers.delete(noiseKeyHex)
       this._emit(CMD_PEER_DISCONNECTED, {
-        noiseKey,
+        noiseKey:     noiseKeyHex,
         discoveryKey: peer?.discoveryKey ?? null
       })
     })
 
-    conn.on('error', (err) => console.error('Connection error:', err.message))
+    conn.on('error', (err) => console.error('Connection error:', err))
   }
 
-  _onPeerMessage (conn, noiseKey, msg) {
+  _onPeerMessage (conn, noiseKeyHex, msg) {
     switch (msg.type) {
 
       case 'handshake': {
         const { discoveryKey, displayName, platform } = msg
         const isOwnDevice = discoveryKey === this.discoveryPublicKey.toString('hex')
 
-        this.peers.set(noiseKey, {
+        this.peers.set(noiseKeyHex, {
           conn, discoveryKey, displayName, platform, isOwnDevice, lastSeen: Date.now()
         })
 
@@ -164,51 +153,59 @@ class PeerDrop {
         }
 
         this._emit(CMD_PEER_CONNECTED, {
-          noiseKey, discoveryKey, displayName, platform, isOwnDevice
+          noiseKey: noiseKeyHex, discoveryKey, displayName, platform, isOwnDevice
         })
         break
       }
 
-      case 'batchStart':
-        this.transfers.onBatchStart(msg)
-        // Notify Swift — one transfer row for the whole directory
+      // ── Receiver: directory batch starting ──────────────────────────────
+      case 'batchStart': {
+        this.transfers.onBatchStart(msg, noiseKeyHex)
         this._emit(CMD_TRANSFER_STARTED, {
           transferId:  msg.batchId,
           fileName:    msg.dirName,
           fileSize:    msg.totalSize,
           fileCount:   msg.fileCount,
-          peerId:      noiseKey,
+          peerId:      noiseKeyHex,
           direction:   'receiving',
           isDirectory: true
         })
         break
+      }
 
+      // ── Receiver: individual file offer (standalone or part of batch) ───
       case 'fileOffer': {
-        // Returns null for batch files (batch row already started above)
-        const info = this.transfers.onOffer(msg, conn, noiseKey)
+        const info = this.transfers.onOffer(msg, conn, noiseKeyHex)
+        // info is null for batch files (batch row already covers them in UI)
         if (info) {
-          this._emit(CMD_TRANSFER_STARTED, { ...info, direction: 'receiving', isDirectory: false })
+          this._emit(CMD_TRANSFER_STARTED, {
+            ...info,
+            direction:   'receiving',
+            isDirectory: false
+          })
         }
         break
       }
 
-      case 'fileAccept':    this.transfers.onAccept(msg.transferId, conn);  break
-      case 'fileChunk':     this.transfers.onChunk(msg);                    break
-      case 'fileComplete':  this.transfers.onComplete(msg);                 break
-      case 'batchComplete': this.transfers.onBatchComplete(msg);            break
+      case 'fileAccept':    this.transfers.onAccept(msg.transferId, conn); break
+      case 'fileChunk':     this.transfers.onChunk(msg);                   break
+      case 'fileComplete':  this.transfers.onComplete(msg);                break
+      case 'batchComplete': this.transfers.onBatchComplete(msg);           break
     }
   }
 
-  // ── File sending ─────────────────────────────────────────────────────────────
+  // ─── Sending ───────────────────────────────────────────────────────────────
 
   async _sendFile (filePath, discoveryKey) {
     const result = this._liveConn(discoveryKey)
     if (!result) throw new Error('Peer not connected: ' + discoveryKey)
-    // TransferManager.offer() detects isDirectory automatically
+    // Pass noiseKey so transfers.js can tag CMD_TRANSFER_STARTED with the
+    // right peerId — DevicePanelView uses it to filter the transfer to the
+    // correct panel via worker.noiseToDiscovery
     this.transfers.offer(filePath, result.conn, result.noiseKey)
   }
 
-  // Returns { conn, noiseKey } for the first live connection matching discoveryKey
+  // Returns { conn, noiseKey } for the first live connection to this peer
   _liveConn (discoveryKey) {
     for (const [noiseKey, peer] of this.peers.entries()) {
       if (peer.discoveryKey === discoveryKey) return { conn: peer.conn, noiseKey }
@@ -216,7 +213,7 @@ class PeerDrop {
     return null
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+  // ─── Helpers ───────────────────────────────────────────────────────────────
 
   _emitSavedPeers () {
     this._emit(CMD_SAVED_PEERS, { peers: store.loadSavedPeers() })
