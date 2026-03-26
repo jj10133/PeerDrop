@@ -28,10 +28,13 @@ struct DevicePanelView: View {
                 VStack(spacing: 0) {
                     panelHeader(device: device)
                     Divider()
-                    dropZone(device: device)
-                    if !peerTransfers.isEmpty {
-                        Divider()
-                        transferList
+                    // When transfers are active, show them inside the drop zone
+                    // so the user sees progress immediately where they dropped.
+                    // The zone returns to its idle state once all transfers finish.
+                    if peerTransfers.isEmpty {
+                        dropZone(device: device)
+                    } else {
+                        activeTransferZone(device: device)
                     }
                 }
             } else {
@@ -114,7 +117,39 @@ struct DevicePanelView: View {
         }
     }
 
-    // MARK: - Transfer list
+    // MARK: - Active transfer zone (replaces drop zone while transfers are in progress)
+
+    private func activeTransferZone(device: PeerDevice) -> some View {
+        VStack(spacing: 0) {
+            // Compact drop target still visible so user can queue more files
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.up.circle")
+                    .font(.system(size: 16))
+                    .foregroundColor(isTargeted ? .blue : .secondary)
+                Text(device.isOnline ? "Drop more files to queue" : "Peer is offline")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(isTargeted ? Color.blue.opacity(0.06) : Color.primary.opacity(0.02))
+            .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+                guard device.isOnline else { return false }
+                return handleDrop(providers)
+            }
+
+            Divider()
+
+            // Transfer rows — directly visible, no scrolling needed for short lists
+            VStack(spacing: 8) {
+                ForEach(peerTransfers) { PanelTransferRow(transfer: $0) }
+            }
+            .padding(16)
+        }
+    }
+
+    // MARK: - Transfer list (kept for reference, no longer used in body)
 
     private var transferList: some View {
         VStack(alignment: .leading, spacing: 0) {
