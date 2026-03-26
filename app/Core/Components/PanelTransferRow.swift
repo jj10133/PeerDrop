@@ -10,7 +10,7 @@ struct PanelTransferRow: View {
 
     private var icon: String {
         if transfer.isDirectory {
-            return isSending ? "folder.fill.badge.plus" : "folder.badge.arrow.down"
+            return isSending ? "folder.fill.badge.plus" : "arrow.down.doc.fill"
         }
         return isSending ? "arrow.up.circle.fill" : "arrow.down.circle.fill"
     }
