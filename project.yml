@@ -13,7 +13,7 @@ targets:
     type: application
     supportedDestinations: [macOS]
     deploymentTarget:
-      macOS: 15.0
+      macOS: 11.0
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop
