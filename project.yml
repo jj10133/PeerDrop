@@ -16,9 +16,12 @@ targets:
       macOS: 15.0
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: to.holepunch.bare
+        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop
         SWIFT_VERSION: 5.0
         CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: PeerDrop
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+
     info:
       path: app/Info.plist
     entitlements:
@@ -37,13 +40,15 @@ targets:
         # File access: reading files the user picks/drags to send,
         # and writing to custom download folders chosen via NSOpenPanel
         com.apple.security.files.user-selected.read-write: true
-
+    appIcon: app/Assets.xcassets/AppIcon.imageset
     dependencies:
       - framework: app/frameworks/BareKit.xcframework
       - package: BareKit
       - package: BareRPC
     sources:
       - path: app/App.swift
+      - path: app/Assets.xcassets
+      - path: app/PeerDrop.icon
 
       - path: app/js/app.js
         group: app/js

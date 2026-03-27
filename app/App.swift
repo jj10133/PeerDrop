@@ -6,7 +6,7 @@ struct App: SwiftUI.App {
     @StateObject private var worker = Worker()
 
     var body: some Scene {
-        MenuBarExtra("PeerDrop", systemImage: "sharedwithyou") {
+        MenuBarExtra("PeerDrop", systemImage: "drop.fill") {
             VStack {
                 ContentView()
                     .environmentObject(worker)
