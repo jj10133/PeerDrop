@@ -1,6 +1,7 @@
-name: PeerDrop
+name: App
 include:
-  - app/addons/addons.yml
+  - addons/addons.yml
+
 packages:
   BareKit:
     url: https://github.com/holepunchto/bare-kit-swift
@@ -8,7 +9,10 @@ packages:
   BareRPC:
     url: https://github.com/holepunchto/bare-rpc-swift
     branch: main
+
 targets:
+
+  # ── macOS ───────────────────────────────────────────────────────────────────
   App:
     type: application
     supportedDestinations: [macOS]
@@ -16,98 +20,220 @@ targets:
       macOS: 13.0
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop
         PRODUCT_NAME: PeerDrop
+        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop
         SWIFT_VERSION: 5.0
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
-        ASSETCATALOG_COMPILER_APPICON_NAME: PeerDrop
-        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
-        ONLY_ACTIVE_ARCH: NO
         ARCHS: arm64
         VALID_ARCHS: arm64
         EXCLUDED_ARCHS: x86_64
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
         ENABLE_HARDENED_RUNTIME: YES
-
-
     info:
-      path: app/Info.plist
-      CFBundleDisplayName: "PeerDrop"
-      CFBundleShortVersionString: "0.1.0"
-      CFBundleVersion: "1"
+      path: platforms/macos/Info.plist
     entitlements:
-      path: app/App.entitlements
+      path: platforms/macos/App.entitlements
       properties:
-        # com.apple.security.application-groups:
-        #   - group.to.holepunch.bare.ios
         com.apple.security.cs.allow-jit: true
         com.apple.security.get-task-allow: true
-        # Hyperswarm: outgoing DHT lookups and peer connections
         com.apple.security.network.client: true
-        # Hyperswarm: accepting incoming peer connections
         com.apple.security.network.server: true
-        # File access: writing received files to ~/Downloads/PeerDrop
         com.apple.security.files.downloads.read-write: true
-        # File access: reading files the user picks/drags to send,
-        # and writing to custom download folders chosen via NSOpenPanel
         com.apple.security.files.user-selected.read-write: true
-    appIcon: app/Assets.xcassets/AppIcon.imageset
+        com.apple.security.application-groups:
+          - group.to.foss.peerdrop
     dependencies:
-      - framework: app/frameworks/BareKit.xcframework
+      - framework: frameworks/BareKit.xcframework
       - package: BareKit
       - package: BareRPC
+    buildScripts:
+      - name: Fix BareKit Symlinks
+        shell: /bin/bash
+        runOnlyWhenInstalling: false
+        basedOnDependencyAnalysis: false
+        script: |
+          FRAMEWORK="${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}/BareKit.framework"
+          if [ -f "$FRAMEWORK/BareKit" ] && [ ! -L "$FRAMEWORK/BareKit" ]; then
+            rm "$FRAMEWORK/BareKit"
+            ln -sf "Versions/Current/BareKit" "$FRAMEWORK/BareKit"
+          fi
+          if [ -d "$FRAMEWORK/Headers" ] && [ ! -L "$FRAMEWORK/Headers" ]; then
+            rm -rf "$FRAMEWORK/Headers"
+            ln -sf "Versions/Current/Headers" "$FRAMEWORK/Headers"
+          fi
+          if [ -d "$FRAMEWORK/Modules" ] && [ ! -L "$FRAMEWORK/Modules" ]; then
+            rm -rf "$FRAMEWORK/Modules"
+            ln -sf "Versions/Current/Modules" "$FRAMEWORK/Modules"
+          fi
+          if [ -d "$FRAMEWORK/Versions/Current" ] && [ ! -L "$FRAMEWORK/Versions/Current" ]; then
+            mv "$FRAMEWORK/Versions/Current" "$FRAMEWORK/Versions/A"
+            ln -sf "A" "$FRAMEWORK/Versions/Current"
+          fi
     sources:
-      - path: app/App.swift
-      - path: app/Assets.xcassets
-      - path: app/PeerDrop.icon
-
-      - path: app/js/app.js
-        group: app/js
-      - path: app/js/transfers.js
-      - path: app/js/store.js
-      - path: app/js/commands.js
-
-      - path: app/app.bundle
+      # macOS-only UI
+      - path: platforms/macos/App.swift
+        group: platforms/macos
+      - path: platforms/macos/ContentView.swift
+      - path: platforms/macos/DevicePanelView.swift
+      - path: platforms/macos/DevicePanelController.swift
+      - path: platforms/macos/SettingsView.swift
+      - path: platforms/macos/QRCodeView.swift
+      - path: platforms/macos/Assets.xcassets
+      - path: platforms/macos/PeerDrop.icon
         optional: true
-
-      - path: app/Core/Root/ContentView.swift
-        group: app/Core/Root
-
-      - path: app/Core/IPC/Worker.swift
-        group: app/Core/IPC
-      - path: app/Core/IPC/Worker+Events.swift
-      - path: app/Core/IPC/IPCBridge.swift
-      - path: app/Core/IPC/Commands.swift
-
-      - path: app/Core/Models/PeerDevice.swift
-        group: app/Core/Models
-      - path: app/Core/Models/FileTransfer.swift
-
-      - path: app/Core/Settings/SettingsView.swift
-        group: app/Core/Settings
-      - path: app/Core/Settings/QRCodeView.swift
-      - path: app/Core/Settings/DevicePanelController.swift
-      - path: app/Core/Settings/DevicePanelView.swift
-
-      - path: app/Core/Components/ActionLink.swift
-        group: app/Core/Components
-      - path: app/Core/Components/TransferRow.swift
-      - path: app/Core/Components/DeviceRow.swift
-      - path: app/Core/Components/PanelTransferRow.swift
-      - path: app/Core/Components/SectionHeader.swift
-
+      # Shared Swift
+      - path: shared/swift/IPC/IPCBridge.swift
+        group: shared/swift/IPC
+      - path: shared/swift/IPC/Worker.swift
+      - path: shared/swift/IPC/Worker+Events.swift
+      - path: shared/swift/IPC/Commands.swift
+      - path: shared/swift/Models/PeerDevice.swift
+        group: shared/swift/Models
+      - path: shared/swift/Models/FileTransfer.swift
+      - path: shared/swift/AppGroup.swift
+        group: shared/swift
+      - path: shared/swift/Components/TransferRow.swift
+        group: shared/swift/Components
+      - path: shared/swift/Components/DeviceRow.swift
+      - path: shared/swift/Components/PanelTransferRow.swift
+      - path: shared/swift/Components/SectionHeader.swift
+      - path: shared/swift/Components/ActionLink.swift
+      # Shared JS
+      - path: shared/js/app.js
+        group: shared/js
+      - path: shared/js/transfers.js
+      - path: shared/js/store.js
+      - path: shared/js/commands.js
+      - path: app.bundle
+        optional: true
     scheme:
       preActions:
         - name: Link & Pack
           script: |
             PATH="${PATH}" "${PWD}/node_modules/.bin/bare-link" \
               --host darwin-arm64 \
-              --out ${PWD}/app/addons/ \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --out ${PWD}/addons/ \
               ${PWD}
-
             PATH="${PATH}" "${PWD}/node_modules/.bin/bare-pack" \
               --host darwin-arm64 \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
               --linked \
               --base ${PWD} \
-              --out ${PWD}/app/app.bundle \
-              ${PWD}/app/js/app.js
+              --out ${PWD}/app.bundle \
+              ${PWD}/shared/js/app.js
+
+  # ── iOS main app ────────────────────────────────────────────────────────────
+  AppIOS:
+    type: application
+    supportedDestinations: [iOS]
+    deploymentTarget:
+      iOS: 16.0
+    settings:
+      base:
+        PRODUCT_NAME: PeerDrop
+        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop.ios
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+    info:
+      path: platforms/ios/Info.plist
+    entitlements:
+      path: platforms/ios/App.entitlements
+      properties:
+        com.apple.security.cs.allow-jit: true
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+        com.apple.security.application-groups:
+          - group.to.foss.peerdrop
+    dependencies:
+      - framework: frameworks/BareKit.xcframework
+      - package: BareKit
+      - package: BareRPC
+      - target: AppIOSShare    # embeds the share extension
+    sources:
+      # iOS-only UI
+      - path: platforms/ios/AppEntry.swift
+        group: platforms/ios
+      - path: platforms/ios/RootView.swift
+      - path: platforms/ios/HomeView.swift
+      - path: platforms/ios/DeviceDetailView.swift
+      - path: platforms/ios/TransferListView.swift
+      - path: platforms/ios/SettingsView+iOS.swift
+      - path: platforms/ios/Assets.xcassets
+      # Shared Swift (same files as macOS target)
+      - path: shared/swift/IPC/IPCBridge.swift
+        group: shared/swift/IPC
+      - path: shared/swift/IPC/Worker.swift
+      - path: shared/swift/IPC/Worker+Events.swift
+      - path: shared/swift/IPC/Commands.swift
+      - path: shared/swift/Models/PeerDevice.swift
+        group: shared/swift/Models
+      - path: shared/swift/Models/FileTransfer.swift
+      - path: shared/swift/AppGroup.swift
+        group: shared/swift
+      - path: shared/swift/Components/TransferRow.swift
+        group: shared/swift/Components
+      - path: shared/swift/Components/DeviceRow.swift
+      - path: shared/swift/Components/PanelTransferRow.swift
+      - path: shared/swift/Components/SectionHeader.swift
+      - path: shared/swift/Components/ActionLink.swift
+      # Shared JS
+      - path: shared/js/app.js
+        group: shared/js
+      - path: shared/js/transfers.js
+      - path: shared/js/store.js
+      - path: shared/js/commands.js
+      - path: app.bundle
+        optional: true
+    scheme:
+      preActions:
+        - name: Link & Pack
+          script: |
+            PATH="${PATH}" "${PWD}/node_modules/.bin/bare-link" \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --out ${PWD}/addons/ \
+              ${PWD}
+            PATH="${PATH}" "${PWD}/node_modules/.bin/bare-pack" \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --linked \
+              --base ${PWD} \
+              --out ${PWD}/app.bundle \
+              ${PWD}/shared/js/app.js
+
+  # ── iOS Share Extension ─────────────────────────────────────────────────────
+  AppIOSShare:
+    type: app-extension
+    supportedDestinations: [iOS]
+    deploymentTarget:
+      iOS: 16.0
+    settings:
+      base:
+        PRODUCT_NAME: PeerDropShare
+        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop.ios.share
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+    info:
+      path: platforms/ios-share/Info.plist
+    entitlements:
+      path: platforms/ios-share/App.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.to.foss.peerdrop
+    sources:
+      - path: platforms/ios-share/ShareViewController.swift
+        group: platforms/ios-share
+      # Share extension only needs AppGroup + models — no BareKit, no Worker
+      - path: shared/swift/AppGroup.swift
+        group: shared/swift
+      - path: shared/swift/Models/PeerDevice.swift
+        group: shared/swift/Models

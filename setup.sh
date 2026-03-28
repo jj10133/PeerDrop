@@ -4,7 +4,7 @@ set -e
 echo "🔧 PeerDrop setup..."
 
 # ── 1. Fix BareKit symlinks ───────────────────────────────────────────────────
-FRAMEWORK="app/frameworks/BareKit.xcframework/macos-arm64_x86_64/BareKit.framework"
+FRAMEWORK="frameworks/BareKit.xcframework/macos-arm64_x86_64/BareKit.framework"
 
 if [ -d "$FRAMEWORK" ]; then
   echo "🔗 Fixing BareKit symlinks..."
@@ -47,11 +47,9 @@ if [ -d "$FRAMEWORK" ]; then
   # ── 2. Sign the framework ──────────────────────────────────────────────────
   echo "✍️  Signing BareKit framework..."
 
-  # Try Developer ID Application first (distribution)
   CERT=$(security find-identity -v -p codesigning 2>/dev/null |
     grep -o '"Developer ID Application[^"]*"' | head -1 | tr -d '"')
 
-  # Fall back to Apple Development (local builds)
   if [ -z "$CERT" ]; then
     CERT=$(security find-identity -v -p codesigning 2>/dev/null |
       grep -o '"Apple Development[^"]*"' | head -1 | tr -d '"')
@@ -71,9 +69,9 @@ if [ -d "$FRAMEWORK" ]; then
   echo "   ✅ BareKit signed"
 
 else
-  echo "   ⚠️  BareKit.xcframework not found — run:"
-  echo "      gh release download --repo holepunchto/bare-kit <version>"
-  echo "      unzip prebuilds.zip && mv macos/BareKit.xcframework app/frameworks/"
+  echo "   ⚠️  BareKit.xcframework not found at frameworks/"
+  echo "      Run: gh release download --repo holepunchto/bare-kit <version>"
+  echo "      Then: unzip prebuilds.zip && mv macos/BareKit.xcframework frameworks/"
   exit 1
 fi
 
