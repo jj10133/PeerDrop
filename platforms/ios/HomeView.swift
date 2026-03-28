@@ -67,7 +67,7 @@ struct HomeView: View {
                         .frame(width: 44, height: 44)
                     Image(systemName: device.systemImage)
                         .font(.system(size: 20))
-                        .foregroundStyle(device.isOnline ? .accent : .tertiary)
+                        .foregroundStyle(device.isOnline ? .secondary : .tertiary)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {

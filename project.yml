@@ -79,7 +79,6 @@ targets:
       - path: platforms/macos/DevicePanelView.swift
       - path: platforms/macos/DevicePanelController.swift
       - path: platforms/macos/SettingsView.swift
-      - path: platforms/macos/QRCodeView.swift
       - path: platforms/macos/Assets.xcassets
       - path: platforms/macos/PeerDrop.icon
         optional: true
@@ -100,6 +99,7 @@ targets:
       - path: shared/swift/Components/PanelTransferRow.swift
       - path: shared/swift/Components/SectionHeader.swift
       - path: shared/swift/Components/ActionLink.swift
+      - path: shared/swift/Components/QRCodeView.swift
       # Shared JS
       - path: shared/js/app.js
         group: shared/js
@@ -156,7 +156,7 @@ targets:
       - framework: frameworks/BareKit.xcframework
       - package: BareKit
       - package: BareRPC
-      - target: AppIOSShare    # embeds the share extension
+      # - target: AppIOSShare    # embeds the share extension
     sources:
       # iOS-only UI
       - path: platforms/ios/AppEntry.swift
@@ -167,6 +167,7 @@ targets:
       - path: platforms/ios/TransferListView.swift
       - path: platforms/ios/SettingsView+iOS.swift
       - path: platforms/ios/Assets.xcassets
+      - path: platforms/ios/PeerDrop.icon
       # Shared Swift (same files as macOS target)
       - path: shared/swift/IPC/IPCBridge.swift
         group: shared/swift/IPC
@@ -184,6 +185,7 @@ targets:
       - path: shared/swift/Components/PanelTransferRow.swift
       - path: shared/swift/Components/SectionHeader.swift
       - path: shared/swift/Components/ActionLink.swift
+      - path: shared/swift/Components/QRCodeView.swift
       # Shared JS
       - path: shared/js/app.js
         group: shared/js

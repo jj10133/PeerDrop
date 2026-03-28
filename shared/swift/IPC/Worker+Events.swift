@@ -118,11 +118,18 @@ extension Worker {
             let fileSize  = data["fileSize"]   as? Int,
             let direction = data["direction"]  as? String
         else { return }
+        let isDirectory = data["isDirectory"] as? Bool ?? false
+        let fileCount   = data["fileCount"]   as? Int  ?? 0
         DispatchQueue.main.async {
             self.activeTransfers.append(FileTransfer(
-                id: id, peerId: peerId, fileName: fileName,
-                fileSize: Int64(fileSize), progress: 0,
-                direction: direction == "receiving" ? .receiving : .sending
+                id:          id,
+                peerId:      peerId,
+                fileName:    fileName,
+                fileSize:    Int64(fileSize),
+                progress:    0,
+                direction:   direction == "receiving" ? .receiving : .sending,
+                isDirectory: isDirectory,
+                fileCount:   fileCount
             ))
         }
     }

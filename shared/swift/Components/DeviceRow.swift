@@ -1,7 +1,10 @@
 // DeviceRow.swift — A single row in the MY DEVICES / PEOPLE lists.
 
 import SwiftUI
+
+#if canImport(AppKit)
 import AppKit
+#endif
 
 struct DeviceRow: View {
     let device: PeerDevice
@@ -28,8 +31,6 @@ struct DeviceRow: View {
         .opacity(device.isOnline ? 1.0 : 0.6)
     }
 
-    // MARK: - Sub-views
-
     private var deviceIcon: some View {
         ZStack(alignment: .bottomTrailing) {
             Circle()
@@ -42,11 +43,12 @@ struct DeviceRow: View {
                 .font(.system(size: 14))
                 .foregroundColor(device.isOnline ? .blue : .secondary)
 
-            // Online indicator dot
             Circle()
                 .fill(device.isOnline ? Color.green : Color.secondary.opacity(0.4))
                 .frame(width: 8, height: 8)
-                .overlay(Circle().stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1.5))
+                .overlay(
+                    Circle().stroke(windowBackground, lineWidth: 1.5)
+                )
                 .offset(x: 2, y: 2)
         }
     }
@@ -66,6 +68,18 @@ struct DeviceRow: View {
         Image(systemName: "arrow.up.circle")
             .font(.system(size: 13))
             .foregroundColor(.secondary.opacity(0.4))
+            #if canImport(AppKit)
             .help("Click to open send panel")
+            #endif
+    }
+
+    // NSColor.windowBackgroundColor only exists on macOS —
+    // use a platform-safe fallback for iOS
+    private var windowBackground: Color {
+        #if canImport(AppKit)
+        Color(NSColor.windowBackgroundColor)
+        #else
+        Color(.systemBackground)
+        #endif
     }
 }

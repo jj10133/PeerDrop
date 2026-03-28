@@ -8,3 +8,14 @@ targets:
       - framework: sodium-native.5.1.0.xcframework
       - framework: udx-native.1.19.2.xcframework
       - framework: bare-fs.4.5.6.xcframework
+      - framework: bare-buffer.3.6.0.xcframework
+  AppIOS:
+    dependencies:
+      - framework: bare-inspect.3.1.4.xcframework
+      - framework: bare-os.3.8.0.xcframework
+      - framework: bare-type.1.1.0.xcframework
+      - framework: bare-url.2.4.0.xcframework
+      - framework: sodium-native.5.1.0.xcframework
+      - framework: udx-native.1.19.2.xcframework
+      - framework: bare-fs.4.5.6.xcframework
+      - framework: bare-buffer.3.6.0.xcframework

@@ -29,7 +29,7 @@ struct DeviceDetailView: View {
                             .frame(width: 60, height: 60)
                         Image(systemName: peer.systemImage)
                             .font(.system(size: 28))
-                            .foregroundStyle(peer.isOnline ? .accent : .tertiary)
+                            .foregroundStyle(peer.isOnline ? .secondary : .tertiary)
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(peer.name)
