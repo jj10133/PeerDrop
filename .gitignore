@@ -9,3 +9,5 @@ Info.plist
 *.zip
 *.xcodeproj
 *.DS_Store
+*.xcframework
+*.framework

@@ -1,4 +1,4 @@
-name: App
+name: PeerDrop
 include:
   - app/addons/addons.yml
 packages:
@@ -17,13 +17,24 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop
+        PRODUCT_NAME: PeerDrop
         SWIFT_VERSION: 5.0
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
         ASSETCATALOG_COMPILER_APPICON_NAME: PeerDrop
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+        ONLY_ACTIVE_ARCH: NO
+        ARCHS: arm64
+        VALID_ARCHS: arm64
+        EXCLUDED_ARCHS: x86_64
+        ENABLE_HARDENED_RUNTIME: YES
+
 
     info:
       path: app/Info.plist
+      CFBundleDisplayName: "PeerDrop"
+      CFBundleShortVersionString: "0.1.0"
+      CFBundleVersion: "1"
     entitlements:
       path: app/App.entitlements
       properties:
@@ -91,15 +102,11 @@ targets:
           script: |
             PATH="${PATH}" "${PWD}/node_modules/.bin/bare-link" \
               --host darwin-arm64 \
-              --host ios-arm64 \
-              --host ios-arm64-simulator \
               --out ${PWD}/app/addons/ \
               ${PWD}
 
             PATH="${PATH}" "${PWD}/node_modules/.bin/bare-pack" \
               --host darwin-arm64 \
-              --host ios-arm64 \
-              --host ios-arm64-simulator \
               --linked \
               --base ${PWD} \
               --out ${PWD}/app/app.bundle \
