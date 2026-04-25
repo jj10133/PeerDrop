@@ -1,0 +1,41 @@
+targets:
+  Vinjari-iOS:
+    type: application
+    supportedDestinations: [iOS]
+    deploymentTarget:
+      iOS: 16.0
+    entitlements:
+      path: app/iOS/App.entitlements
+    settings:
+      base:
+        INFOPLIST_FILE: app/iOS/Info.plist
+    dependencies:
+      - framework: frameworks/BareKit.xcframework
+      - package: BareKit
+      - package: BareRPC
+      # - target: AppIOSShare    # uncomment when App Group provisioning is ready
+    sources:
+      - app/iOS
+      - shared
+    configFiles:
+      Debug: configs/PeerDrop-iOS-Debug.xcconfig
+      Release: configs/PeerDrop-iOS-Release.xcconfig
+    scheme:
+      preActions:
+        - name: Link & Pack
+          script: |
+            cd "${SRCROOT}"
+            PATH="${PATH}" "${SRCROOT}/node_modules/.bin/bare-link" \
+              --host darwin-arm64 \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --out "${SRCROOT}/addons/" \
+              "${SRCROOT}"
+            PATH="${PATH}" "${SRCROOT}/node_modules/.bin/bare-pack" \
+              --host darwin-arm64 \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --linked \
+              --base "${SRCROOT}" \
+              --out "${SRCROOT}/app.bundle" \
+              "${SRCROOT}/shared/js/app.js"

@@ -1,0 +1,40 @@
+targets:
+  Vinjari-macOS:
+    type: application
+    supportedDestinations: [macOS]
+    deploymentTarget:
+      macOS: 13.0
+    entitlements:
+      path: app/macOS/App.entitlements
+    settings:
+      base:
+        INFOPLIST_FILE: app/macOS/Info.plist
+    dependencies:
+      - framework: frameworks/BareKit.xcframework
+      - package: BareKit
+      - package: BareRPC
+    sources:
+      - app/macOS
+      - shared
+    configFiles:
+      Debug: configs/PeerDrop-macOS-Debug.xcconfig
+      Release: configs/PeerDrop-macOS-Release.xcconfig
+    scheme:
+      preActions:
+        - name: Link & Pack
+          script: |
+            cd "${SRCROOT}"
+            PATH="${PATH}" "${SRCROOT}/node_modules/.bin/bare-link" \
+              --host darwin-arm64 \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --out "${SRCROOT}/addons/" \
+              "${SRCROOT}"
+            PATH="${PATH}" "${SRCROOT}/node_modules/.bin/bare-pack" \
+              --host darwin-arm64 \
+              --host ios-arm64 \
+              --host ios-arm64-simulator \
+              --linked \
+              --base "${SRCROOT}" \
+              --out "${SRCROOT}/app.bundle" \
+              "${SRCROOT}/shared/js/app.js"

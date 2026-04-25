@@ -1,0 +1,7 @@
+packages:
+  BareKit:
+    url: https://github.com/holepunchto/bare-kit-swift
+    branch: main
+  BareRPC:
+    url: https://github.com/holepunchto/bare-rpc-swift
+    branch: main

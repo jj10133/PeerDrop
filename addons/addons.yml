@@ -1,5 +1,5 @@
 targets:
-  App:
+  Vinjari-macOS:
     dependencies:
       - framework: bare-inspect.3.1.4.xcframework
       - framework: bare-os.3.8.0.xcframework
@@ -9,7 +9,7 @@ targets:
       - framework: udx-native.1.19.2.xcframework
       - framework: bare-fs.4.5.6.xcframework
       - framework: bare-buffer.3.6.0.xcframework
-  AppIOS:
+  Vinjari-iOS:
     dependencies:
       - framework: bare-inspect.3.1.4.xcframework
       - framework: bare-os.3.8.0.xcframework

@@ -1,0 +1,22 @@
+targets:
+  AppIOSShare:
+    type: app-extension
+    supportedDestinations: [iOS]
+    deploymentTarget:
+      iOS: 16.0
+    settings:
+      base:
+        PRODUCT_NAME: PeerDropShare
+        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop.ios.share
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        INFOPLIST_FILE: app/iOS-Share/Info.plist
+    entitlements:
+      path: app/iOS-Share/App.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.to.foss.peerdrop
+    sources:
+      - app/iOS-Share
+      - shared
