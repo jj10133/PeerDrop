@@ -1,0 +1,11 @@
+
+PRODUCT_NAME = PeerDrop
+SWIFT_VERSION = 5.0
+
+INFOPLIST_KEY_CFBundleDisplayName = PeerDrop
+INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.productivity
+
+ASSETCATALOG_COMPILER_APPICON_NAME = PeerDrop
+ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES
+
+

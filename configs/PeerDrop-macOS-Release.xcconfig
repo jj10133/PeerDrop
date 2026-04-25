@@ -1,0 +1,9 @@
+#include "Base-macOS.xcconfig"
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+CODE_SIGN_ENTITLEMENTS = app/macOS/App.entitlements
+CODE_SIGNING_REQUIRED = YES
+VALIDATE_PRODUCT = YES
+SWIFT_OPTIMIZATION_LEVEL = -O
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
