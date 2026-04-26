@@ -24,18 +24,17 @@ targets:
       preActions:
         - name: Link & Pack
           script: |
-            cd "${SRCROOT}"
-            PATH="${PATH}" "${SRCROOT}/node_modules/.bin/bare-link" \
+            PATH="${PATH}" "${PWD}/node_modules/.bin/bare-link" \
               --host darwin-arm64 \
               --host ios-arm64 \
               --host ios-arm64-simulator \
-              --out "${SRCROOT}/addons/" \
-              "${SRCROOT}"
-            PATH="${PATH}" "${SRCROOT}/node_modules/.bin/bare-pack" \
+              --out "${PWD}/addons/" \
+              "${PWD}"
+            PATH="${PATH}" "${PWD}/node_modules/.bin/bare-pack" \
               --host darwin-arm64 \
               --host ios-arm64 \
               --host ios-arm64-simulator \
               --linked \
-              --base "${SRCROOT}" \
-              --out "${SRCROOT}/app.bundle" \
-              "${SRCROOT}/shared/js/app.js"
+              --base "${PWD}" \
+              --out "${PWD}/app/iOS/app.bundle" \
+              "${PWD}/shared/js/app.js"
