@@ -1,17 +1,21 @@
 import BareRPC
 import Foundation
 
-extension Worker {
+extension Worker: RPCDelegate {
 
     func setupEventHandlers() {
-        bridge.rpc.onEvent   = { [weak self] event in await self?.handleEvent(event) }
-        bridge.rpc.onRequest = { req in req.reply(nil) }
-        bridge.rpc.onError   = { error in print("❌ RPC: \(error)") }
+        bridge.rpc.delegate = self
     }
 
-    // MARK: - Dispatch
+    // MARK: - RPCDelegate
 
-    func handleEvent(_ event: IncomingEvent) async {
+    public func rpc(_ rpc: RPC, send data: Data) {}
+
+    public func rpc(_ rpc: RPC, didReceiveRequest request: IncomingRequest) async throws {
+        request.reply(nil)
+    }
+
+    public func rpc(_ rpc: RPC, didReceiveEvent event: IncomingEvent) async {
         guard
             let data = event.data,
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -30,6 +34,10 @@ extension Worker {
         }
     }
 
+    public func rpc(_ rpc: RPC, didFailWith error: Error) {
+        print("❌ RPC: \(error)")
+    }
+
     // MARK: - Handlers
 
     private func onReady(_ data: [String: Any]) {
@@ -46,8 +54,8 @@ extension Worker {
         DispatchQueue.main.async {
             self.knownDevices = peers.compactMap { p in
                 guard let dk = p["discoveryKey"] as? String else { return nil }
-                let name     = p["displayName"] as? String
-                let platform = p["platform"]    as? String
+                let name        = p["displayName"] as? String
+                let platform    = p["platform"]    as? String
                 let isOnline    = self.knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
                 let isOwnDevice = dk == self.myPeerID
                 return PeerDevice(
@@ -59,7 +67,7 @@ extension Worker {
                     isOwnDevice:  isOwnDevice
                 )
             }
-            self.syncPeersToAppGroup()  // ← keep extension in sync
+            self.syncPeersToAppGroup()
         }
     }
 
@@ -87,7 +95,7 @@ extension Worker {
             } else {
                 self.knownDevices.append(updated)
             }
-            self.syncPeersToAppGroup()  // ← keep extension in sync
+            self.syncPeersToAppGroup()
         }
     }
 
@@ -106,7 +114,7 @@ extension Worker {
                     isOwnDevice:  d.isOwnDevice
                 )
             }
-            self.syncPeersToAppGroup()  // ← keep extension in sync
+            self.syncPeersToAppGroup()
         }
     }
 

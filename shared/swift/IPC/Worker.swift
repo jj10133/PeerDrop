@@ -24,14 +24,12 @@ class Worker: ObservableObject {
     // MARK: - Internal
 
     let bridge = IPCBridge()
-
-    /// Maps ephemeral noiseKey → stable discoveryKey for disconnect resolution
     var noiseToDiscovery: [String: String] = [:]
 
     // MARK: - Init
 
     init() {
-        setupEventHandlers()
+        setupEventHandlers()  // sets bridge.rpc.delegate = self
         Task { await bridge.start() }
     }
 
@@ -83,8 +81,6 @@ class Worker: ObservableObject {
     }
 
     // MARK: - App Group sync
-    // Called after every knownDevices update so the Share Extension
-    // always has a fresh peer list without needing the app to be running.
 
     func syncPeersToAppGroup() {
         let appGroupPeers = knownDevices.map { device in

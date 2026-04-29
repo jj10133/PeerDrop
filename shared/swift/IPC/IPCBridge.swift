@@ -10,14 +10,6 @@ import BareKit
 import BareRPC
 import Foundation
 
-// IPCBridge owns the BareKit Worklet and wires it to a BareRPC.RPC instance.
-// It is the only place in the app that knows about raw IPC bytes.
-//
-// Usage:
-//   let bridge = IPCBridge()
-//   bridge.rpc.onEvent = { event in ... }
-//   Task { await bridge.start() }
-
 final class IPCBridge {
 
     let rpc: RPC
