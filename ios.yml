@@ -4,8 +4,6 @@ targets:
     supportedDestinations: [iOS]
     deploymentTarget:
       iOS: 16.0
-    entitlements:
-      path: app/iOS/App.entitlements
     settings:
       base:
         INFOPLIST_FILE: app/iOS/Info.plist

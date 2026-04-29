@@ -4,8 +4,6 @@ targets:
     supportedDestinations: [macOS]
     deploymentTarget:
       macOS: 13.0
-    entitlements:
-      path: app/macOS/App.entitlements
     settings:
       base:
         INFOPLIST_FILE: app/macOS/Info.plist
