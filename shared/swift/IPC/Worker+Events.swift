@@ -4,7 +4,7 @@ import Foundation
 extension Worker: RPCDelegate {
 
     func setupEventHandlers() {
-        bridge.rpc.delegate = self
+        bridge.setHandler(self)
     }
 
     // MARK: - RPCDelegate

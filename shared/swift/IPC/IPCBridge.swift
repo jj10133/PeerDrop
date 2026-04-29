@@ -1,11 +1,3 @@
-//
-//  IPCBridge.swift
-//  App
-//
-//  Created by Janardhan on 2026-03-25.
-//
-
-
 import BareKit
 import BareRPC
 import Foundation
@@ -13,7 +5,6 @@ import Foundation
 final class IPCBridge {
 
     let rpc: RPC
-
     private let worklet:  Worklet
     private let delegate: _Delegate
 
@@ -30,7 +21,7 @@ final class IPCBridge {
         self.rpc      = rpc
     }
 
-    /// Drive the inbound read loop. Call once from a long-lived async Task.
+    /// Drive the inbound read loop.
     func start() async {
         await delegate.readLoop()
     }
@@ -39,6 +30,11 @@ final class IPCBridge {
     func request(_ command: UInt, body: [String: Any]) async throws -> Data? {
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
         return try await rpc.request(command, data: data)
+    }
+
+    /// Set an external event/request handler — called for all incoming messages.
+    func setHandler(_ handler: any RPCDelegate) {
+        delegate.externalHandler = handler
     }
 
     // MARK: - Lifecycle
@@ -54,9 +50,13 @@ private final class _Delegate: RPCDelegate {
     private let ipc: IPC
     unowned var rpc: RPC!
 
+    /// External handler for events — set by Worker
+    weak var externalHandler: (any RPCDelegate)?
+
     init(ipc: IPC) { self.ipc = ipc }
 
     func rpc(_ rpc: RPC, send data: Data) {
+        print("📤 sending \(data.count) bytes to JS")
         Task {
             do { try await ipc.write(data: data) }
             catch { print("❌ IPC write: \(error)") }
@@ -64,10 +64,28 @@ private final class _Delegate: RPCDelegate {
     }
 
     func readLoop() async {
+        print("📡 readLoop started")
         do {
-            for try await chunk in ipc { rpc.receive(chunk) }
+            for try await chunk in ipc {
+                print("📡 received \(chunk.count) bytes from JS")
+                rpc.receive(chunk)
+            }
         } catch {
             print("❌ IPC read: \(error)")
         }
+    }
+
+    func rpc(_ rpc: RPC, didReceiveRequest request: IncomingRequest) async throws {
+        try await externalHandler?.rpc(rpc, didReceiveRequest: request)
+            ?? { request.reply(nil) }()
+    }
+
+    func rpc(_ rpc: RPC, didReceiveEvent event: IncomingEvent) async {
+        await externalHandler?.rpc(rpc, didReceiveEvent: event)
+    }
+
+    func rpc(_ rpc: RPC, didFailWith error: Error) {
+        print("❌ RPC: \(error)")
+        externalHandler?.rpc(rpc, didFailWith: error)
     }
 }
