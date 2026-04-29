@@ -1,16 +1,4 @@
 // app.js — PeerDrop orchestrator with protomux multiplexing.
-//
-// Each Hyperswarm connection runs two channel types over one Protomux:
-//
-//   'peerdrop/control'                   — one per connection, JSON signalling
-//   'peerdrop/transfer'  id=transferId   — one per file, raw binary data
-//
-// The receiver pre-registers mux.pair('peerdrop/transfer') on every connection.
-// When the sender opens a transfer channel, the pair handler fires synchronously
-// and opens the matching receiver channel before any data arrives.
-// This eliminates the race condition where the incoming open would be rejected.
-//
-// fileAccept is no longer needed — channel pairing IS the accept signal.
 
 const Hyperswarm = require('hyperswarm')
 const Protomux   = require('protomux')
@@ -32,7 +20,6 @@ class PeerDrop {
   constructor () {
     this.swarm              = null
     this.discoveryPublicKey = null
-    // noiseKeyHex → { mux, controlCh, discoveryKey, displayName, platform, isOwnDevice }
     this.peers = new Map()
 
     this.rpc = new RPC(BareKit.IPC, (req) => this._onRequest(req))
@@ -65,9 +52,13 @@ class PeerDrop {
   // ── Swift → JS ───────────────────────────────────────────────────────────────
 
   _onRequest (req) {
-    if (req.id === undefined) return
+    // Events have id === 0, requests have id > 0
+    if (req.id === 0) return
+
     const body  = req.data ? JSON.parse(req.data.toString()) : {}
-    const reply = (err) => err ? req.reply(Buffer.from(err.message)) : req.reply()
+    const reply = (err) => err
+      ? req.reply(Buffer.from(JSON.stringify({ error: err.message })))
+      : req.reply()
 
     switch (req.command) {
       case CMD_SEND_FILE:
@@ -84,7 +75,8 @@ class PeerDrop {
         this._forgetPeer(body.peerDiscoveryKey)
         reply()
         break
-      default: reply()
+      default:
+        reply()
     }
   }
 
@@ -94,6 +86,7 @@ class PeerDrop {
     if (!/^[0-9a-f]{64}$/i.test(discoveryKeyHex)) {
       throw new Error('Invalid Peer ID — must be 64 hex characters')
     }
+    console.log('[peerdrop] joining topic:', discoveryKeyHex)
     store.upsertSavedPeer(discoveryKeyHex)
     this._joinTopic(discoveryKeyHex)
     this._emitSavedPeers()
@@ -113,12 +106,9 @@ class PeerDrop {
 
   _onConnection (conn, info) {
     const noiseKeyHex = info.publicKey.toString('hex')
-    const mux         = new Protomux(conn)
+    console.log('[peerdrop] new connection:', noiseKeyHex.slice(0, 16))
+    const mux = new Protomux(conn)
 
-    // Pre-register the transfer channel handler on this mux.
-    // This MUST be called before any transfer channels are opened by the remote.
-    // The notify callback fires synchronously when an incoming transfer channel
-    // arrives, so we open the matching rxCh before protomux can reject it.
     this.transfers.pairTransferChannels(mux, noiseKeyHex)
 
     this.peers.set(noiseKeyHex, {
@@ -155,7 +145,7 @@ class PeerDrop {
     this.peers.get(noiseKeyHex).controlCh = controlCh
     controlCh.open()
 
-    conn.on('error', (err) => console.error('Connection error:', err.message))
+    conn.on('error', (err) => console.error('[peerdrop] connection error:', err.message))
   }
 
   // ── Control message router ───────────────────────────────────────────────────
@@ -165,6 +155,7 @@ class PeerDrop {
 
       case 'handshake': {
         const { discoveryKey, displayName, platform } = msg
+        console.log('[peerdrop] handshake from:', displayName, discoveryKey.slice(0, 16))
         const isOwnDevice = discoveryKey === this.discoveryPublicKey.toString('hex')
         const peer = this.peers.get(noiseKeyHex)
         if (peer) {
@@ -198,8 +189,6 @@ class PeerDrop {
       }
 
       case 'fileOffer': {
-        // Register the offer so that when pairTransferChannels' notify fires,
-        // it can attach the write stream to the already-opened rxCh.
         const info = this.transfers.onOffer(msg, noiseKeyHex)
         if (info) {
           this._emit(CMD_TRANSFER_STARTED, {
