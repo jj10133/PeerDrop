@@ -1,5 +1,5 @@
 targets:
-  Vinjari-macOS:
+  PeerDrop-macOS:
     type: application
     supportedDestinations: [macOS]
     deploymentTarget:

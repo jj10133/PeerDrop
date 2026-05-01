@@ -1,5 +1,5 @@
 targets:
-  Vinjari-iOS:
+  PeerDrop-iOS:
     type: application
     supportedDestinations: [iOS]
     deploymentTarget:
