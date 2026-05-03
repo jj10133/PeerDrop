@@ -24,5 +24,7 @@
 	<string>alert</string>
 	<key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
 </dict>
 </plist>
