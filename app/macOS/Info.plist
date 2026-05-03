@@ -20,5 +20,7 @@
 	<string>1</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PeerDrop uses the local network to discover and connect to nearby devices</string>
+	<key>NSUserNotificationAlertStyle</key>
+	<string>alert</string>
 </dict>
 </plist>
