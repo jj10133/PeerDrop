@@ -29,14 +29,15 @@ class Worker: ObservableObject {
     // MARK: - Init
 
     init() {
-        setupEventHandlers()  // sets bridge.rpc.delegate = self
+        setupEventHandlers()
         Task { await bridge.start() }
     }
 
     // MARK: - Public API
 
+    /// Send a file — fire and forget, no reply needed, safe for multiple concurrent calls
     func sendFile(at url: URL, to discoveryKey: String) {
-        fireAndForget(Cmd.sendFile, body: ["filePath": url.path, "peerId": discoveryKey])
+        bridge.event(Cmd.sendFile, body: ["filePath": url.path, "peerId": discoveryKey])
     }
 
     func connectPeer(peerID: String) {
@@ -63,6 +64,7 @@ class Worker: ObservableObject {
 
     // MARK: - Helpers
 
+    /// Use for commands that need a reply — avoid for high-frequency calls
     func fireAndForget(_ command: UInt, body: [String: Any]) {
         Task {
             do { _ = try await bridge.request(command, body: body) }

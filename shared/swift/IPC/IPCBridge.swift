@@ -21,23 +21,25 @@ final class IPCBridge {
         self.rpc      = rpc
     }
 
-    /// Drive the inbound read loop.
     func start() async {
         await delegate.readLoop()
     }
 
-    /// Send a request to JS and await its reply.
+    /// Fire-and-forget event — no reply expected, safe to call concurrently
+    func event(_ command: UInt, body: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        rpc.event(command, data: data)
+    }
+
+    /// Request — expects a reply, use only for commands that need acknowledgement
     func request(_ command: UInt, body: [String: Any]) async throws -> Data? {
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
         return try await rpc.request(command, data: data)
     }
 
-    /// Set an external event/request handler — called for all incoming messages.
     func setHandler(_ handler: any RPCDelegate) {
         delegate.externalHandler = handler
     }
-
-    // MARK: - Lifecycle
 
     func suspend()   { worklet.suspend() }
     func resume()    { worklet.resume() }
@@ -49,14 +51,11 @@ final class IPCBridge {
 private final class _Delegate: RPCDelegate {
     private let ipc: IPC
     unowned var rpc: RPC!
-
-    /// External handler for events — set by Worker
     weak var externalHandler: (any RPCDelegate)?
 
     init(ipc: IPC) { self.ipc = ipc }
 
     func rpc(_ rpc: RPC, send data: Data) {
-        print("📤 sending \(data.count) bytes to JS")
         Task {
             do { try await ipc.write(data: data) }
             catch { print("❌ IPC write: \(error)") }
@@ -64,12 +63,8 @@ private final class _Delegate: RPCDelegate {
     }
 
     func readLoop() async {
-        print("📡 readLoop started")
         do {
-            for try await chunk in ipc {
-                print("📡 received \(chunk.count) bytes from JS")
-                rpc.receive(chunk)
-            }
+            for try await chunk in ipc { rpc.receive(chunk) }
         } catch {
             print("❌ IPC read: \(error)")
         }

@@ -20,7 +20,7 @@ class PeerDrop {
   constructor () {
     this.swarm              = null
     this.discoveryPublicKey = null
-    this.peers = new Map()
+    this.peers              = new Map()
 
     this.rpc = new RPC(BareKit.IPC, (req) => this._onRequest(req))
     this.transfers = new TransferManager(
@@ -30,7 +30,7 @@ class PeerDrop {
     this._init()
   }
 
-  // ── Boot ────────────────────────────────────────────────────────────────────
+  // ── Boot ──────────────────────────────────────────────────────────────────
 
   async _init () {
     const { discoveryPublicKey } = await store.loadIdentity()
@@ -49,21 +49,29 @@ class PeerDrop {
     this._emitSavedPeers()
   }
 
-  // ── Swift → JS ───────────────────────────────────────────────────────────────
+  // ── Swift → JS ────────────────────────────────────────────────────────────
 
   _onRequest (req) {
-    // Events have id === 0, requests have id > 0
-    if (req.id === 0) return
+    // Events (id === 0) — fire and forget from Swift, no reply needed
+    if (req.id === 0) {
+      const body = req.data ? JSON.parse(req.data.toString()) : {}
+      switch (req.command) {
+        case CMD_SEND_FILE:
+          this._sendFile(body.filePath, body.peerId).catch(err =>
+            console.error('[peerdrop] send error:', err.message)
+          )
+          break
+      }
+      return
+    }
 
+    // Requests (id > 0) — Swift expects a reply
     const body  = req.data ? JSON.parse(req.data.toString()) : {}
     const reply = (err) => err
       ? req.reply(Buffer.from(JSON.stringify({ error: err.message })))
       : req.reply()
 
     switch (req.command) {
-      case CMD_SEND_FILE:
-        this._sendFile(body.filePath, body.peerId).then(() => reply()).catch(reply)
-        break
       case CMD_CONNECT_PEER:
         this._connectToPeer(body.peerID).then(() => reply()).catch(reply)
         break
@@ -80,13 +88,12 @@ class PeerDrop {
     }
   }
 
-  // ── Peer management ──────────────────────────────────────────────────────────
+  // ── Peer management ───────────────────────────────────────────────────────
 
   async _connectToPeer (discoveryKeyHex) {
     if (!/^[0-9a-f]{64}$/i.test(discoveryKeyHex)) {
       throw new Error('Invalid Peer ID — must be 64 hex characters')
     }
-    console.log('[peerdrop] joining topic:', discoveryKeyHex)
     store.upsertSavedPeer(discoveryKeyHex)
     this._joinTopic(discoveryKeyHex)
     this._emitSavedPeers()
@@ -102,12 +109,11 @@ class PeerDrop {
     this.swarm.join(Buffer.from(hex, 'hex'), { server: false, client: true })
   }
 
-  // ── Connection setup ─────────────────────────────────────────────────────────
+  // ── Connection setup ──────────────────────────────────────────────────────
 
   _onConnection (conn, info) {
     const noiseKeyHex = info.publicKey.toString('hex')
-    console.log('[peerdrop] new connection:', noiseKeyHex.slice(0, 16))
-    const mux = new Protomux(conn)
+    const mux         = new Protomux(conn)
 
     this.transfers.pairTransferChannels(mux, noiseKeyHex)
 
@@ -148,14 +154,13 @@ class PeerDrop {
     conn.on('error', (err) => console.error('[peerdrop] connection error:', err.message))
   }
 
-  // ── Control message router ───────────────────────────────────────────────────
+  // ── Control message router ────────────────────────────────────────────────
 
   _onControlMessage (mux, noiseKeyHex, msg) {
     switch (msg.type) {
 
       case 'handshake': {
         const { discoveryKey, displayName, platform } = msg
-        console.log('[peerdrop] handshake from:', displayName, discoveryKey.slice(0, 16))
         const isOwnDevice = discoveryKey === this.discoveryPublicKey.toString('hex')
         const peer = this.peers.get(noiseKeyHex)
         if (peer) {
@@ -207,7 +212,7 @@ class PeerDrop {
     }
   }
 
-  // ── Sending ──────────────────────────────────────────────────────────────────
+  // ── Sending ───────────────────────────────────────────────────────────────
 
   async _sendFile (filePath, discoveryKey) {
     const peer = this._livePeer(discoveryKey)
@@ -222,7 +227,7 @@ class PeerDrop {
     return null
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   _emitSavedPeers () {
     this._emit(CMD_SAVED_PEERS, { peers: store.loadSavedPeers() })
