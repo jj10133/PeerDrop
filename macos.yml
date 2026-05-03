@@ -17,6 +17,35 @@ targets:
     configFiles:
       Debug: configs/PeerDrop-macOS-Debug.xcconfig
       Release: configs/PeerDrop-macOS-Release.xcconfig
+    postBuildScripts:
+      - name: Fix Framework Symlinks in Bundle
+        shell: /bin/bash
+        runOnlyWhenInstalling: false
+        basedOnDependencyAnalysis: false
+        script: |
+          fix_fw() {
+            local FW="$1"
+            [ -d "$FW" ] || return
+            local NAME="$(basename "$FW" .framework)"
+            if [ -d "$FW/Versions/A" ] && [ ! -L "$FW/Versions/Current" ]; then
+              rm -rf "$FW/Versions/Current"
+              ln -sf A "$FW/Versions/Current"
+            fi
+            if [ -f "$FW/Versions/A/$NAME" ] && [ ! -L "$FW/$NAME" ]; then
+              rm -f "$FW/$NAME"
+              ln -sf "Versions/Current/$NAME" "$FW/$NAME"
+            fi
+            for DIR in Headers Resources Modules; do
+              if [ -d "$FW/Versions/A/$DIR" ] && [ ! -L "$FW/$DIR" ]; then
+                rm -rf "$FW/$DIR"
+                ln -sf "Versions/Current/$DIR" "$FW/$DIR"
+              fi
+            done
+          }
+          FRAMEWORKS="${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}"
+          for FW in "$FRAMEWORKS"/*.framework; do
+            fix_fw "$FW"
+          done
     scheme:
       preActions:
         - name: Link & Pack
