@@ -11,6 +11,7 @@ struct App: SwiftUI.App {
                 ContentView()
                     .environmentObject(worker)
             }
+            .frame(height: 300)
             .edgesIgnoringSafeArea(.all)
         }
         .menuBarExtraStyle(.window)
