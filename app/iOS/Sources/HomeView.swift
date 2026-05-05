@@ -46,10 +46,13 @@ struct HomeView: View {
                 AddContactView()
                     .environmentObject(worker)
             }
-            .navigationDestination(item: $selectedPeer) { peer in
+            .navigationDestination(for: PeerDevice.self) { peer in
                 DeviceDetailView(peer: peer)
-                    .environmentObject(worker)
             }
+//            .navigationDestination(item: $selectedPeer) { peer in
+//                DeviceDetailView(peer: peer)
+//                    .environmentObject(worker)
+//            }
         }
     }
 

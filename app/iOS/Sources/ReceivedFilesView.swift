@@ -1,3 +1,11 @@
+//
+//  ReceivedFilesView.swift
+//  PeerDrop
+//
+//  Created by Janardhan on 2026-05-04.
+//
+
+
 // ReceivedFilesView.swift — Shows files received into ~/Documents/PeerDrop
 // Tapping a file opens it with QuickLook for preview or share.
 
@@ -97,8 +105,8 @@ struct ReceivedFilesView: View {
         isLoading = true
         Task {
             let downloadDir = FileManager.default
-                .homeDirectoryForCurrentUser
-                .appendingPathComponent("Documents/PeerDrop")
+                .urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("PeerDrop")
 
             var result: [ReceivedFile] = []
             if let contents = try? FileManager.default.contentsOfDirectory(
@@ -182,7 +190,7 @@ struct FileRow: View {
                     .frame(width: 44, height: 44)
                 Image(systemName: file.icon)
                     .font(.system(size: 20))
-                    .foregroundStyle(.accent)
+                    .foregroundStyle(.blue)
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -192,7 +200,7 @@ struct FileRow: View {
                 HStack(spacing: 6) {
                     Text(file.formattedSize)
                     Text("·")
-                    Text(file.formatedDate)
+                    Text(file.formattedDate)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

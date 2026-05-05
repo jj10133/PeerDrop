@@ -18,6 +18,11 @@ struct RootView: View {
                 }
                 .badge(worker.activeTransfers.count > 0 ? worker.activeTransfers.count : 0)
 
+            ReceivedFilesView()
+                .tabItem {
+                    Label("Received", systemImage: "tray.and.arrow.down.fill")
+                }
+
             SettingsViewiOS()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")

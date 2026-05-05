@@ -26,10 +26,6 @@ function writeJSON (filePath, data) {
 }
 
 // ─── 1. Identity ──────────────────────────────────────────────────────────────
-//
-// Mnemonic lives in ~/.peerdrop/seed (mode 0o600, owner-read only).
-// profileDiscoveryPublicKey is derived from it — this is the "Peer ID" users share.
-// Own devices share the same mnemonic → same Peer ID → Hyperswarm recognises them.
 
 async function loadIdentity () {
   ensureDir(ROOT)
@@ -48,9 +44,19 @@ async function loadIdentity () {
 }
 
 // ─── 2. Config ────────────────────────────────────────────────────────────────
+//
+// On iOS, ~/Downloads doesn't exist and isn't visible in the Files app.
+// ~/Documents/PeerDrop is visible under Files → On My iPhone → PeerDrop
+// (requires UIFileSharingEnabled = true in Info.plist).
+// On macOS/Linux, ~/Downloads/PeerDrop is the expected location.
 
-const CONFIG_PATH      = path.join(ROOT, 'config.json')
-const DEFAULT_DOWNLOAD = path.join(os.homedir(), 'Downloads', 'PeerDrop')
+const platform = os.platform()
+
+const DEFAULT_DOWNLOAD = platform === 'ios'
+  ? path.join(os.homedir(), 'Documents', 'PeerDrop')
+  : path.join(os.homedir(), 'Downloads', 'PeerDrop')
+
+const CONFIG_PATH = path.join(ROOT, 'config.json')
 
 function loadConfig ()       { return readJSON(CONFIG_PATH, {}) }
 function saveConfig (patch)  { writeJSON(CONFIG_PATH, Object.assign(loadConfig(), patch)) }
@@ -58,9 +64,6 @@ function getDownloadPath ()  { return loadConfig().downloadPath || DEFAULT_DOWNL
 function setDownloadPath (p) { ensureDir(p); saveConfig({ downloadPath: p }) }
 
 // ─── 3. Peers ─────────────────────────────────────────────────────────────────
-//
-// Schema: { discoveryKey, displayName, platform, lastSeen }
-// Keyed by discoveryKey. Own devices identified at runtime (same discoveryKey).
 
 const PEERS_PATH = path.join(ROOT, 'saved-peers.json')
 

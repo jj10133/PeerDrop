@@ -20,5 +20,11 @@
 	<string>1</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PeerDrop uses the local network to discover and connect to nearby devices.</string>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+  <key>UIFileSharingEnabled</key>
+  <true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
 </dict>
 </plist>

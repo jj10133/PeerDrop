@@ -14,6 +14,8 @@ targets:
     sources:
       - app/macOS
       - shared
+    resources: 
+      - path: app/iOS/app.bundle
     configFiles:
       Debug: configs/PeerDrop-macOS-Debug.xcconfig
       Release: configs/PeerDrop-macOS-Release.xcconfig
