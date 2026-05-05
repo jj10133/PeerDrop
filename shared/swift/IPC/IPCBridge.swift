@@ -10,12 +10,6 @@ final class IPCBridge {
 
     init() {
         worklet = Worklet()
-        // Debug — find where bundle actually is
-            print("📦 main bundle path:", Bundle.main.bundlePath)
-            print("📦 resource path:", Bundle.main.resourcePath ?? "nil")
-            
-            let bundleURL = Bundle.main.url(forResource: "app", withExtension: "bundle")
-            print("📦 app.bundle URL:", bundleURL?.path ?? "NOT FOUND")
         worklet.start(name: "app", ofType: "bundle")
 
         let ipc      = IPC(worklet: worklet)
