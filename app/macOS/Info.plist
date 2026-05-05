@@ -26,5 +26,16 @@
     <string>public.app-category.productivity</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>peerdrop</string>
+        </array>
+        <key>CFBundleURLName</key>
+        <string>to.foss.peerdrop</string>
+    </dict>
+  </array>
 </dict>
 </plist>
