@@ -6,6 +6,7 @@ struct HomeView: View {
     @EnvironmentObject var worker: Worker
     @State private var showAddContact = false
     @State private var selectedPeer: PeerDevice?
+    @State private var showDetail = false
 
     var body: some View {
         NavigationStack {
@@ -46,13 +47,12 @@ struct HomeView: View {
                 AddContactView()
                     .environmentObject(worker)
             }
-            .navigationDestination(for: PeerDevice.self) { peer in
-                DeviceDetailView(peer: peer)
+            .navigationDestination(isPresented: $showDetail) {
+                if let peer = selectedPeer {
+                    DeviceDetailView(peer: peer)
+                        .environmentObject(worker)
+                }
             }
-//            .navigationDestination(item: $selectedPeer) { peer in
-//                DeviceDetailView(peer: peer)
-//                    .environmentObject(worker)
-//            }
         }
     }
 
@@ -60,6 +60,7 @@ struct HomeView: View {
     func deviceRow(_ device: PeerDevice) -> some View {
         Button {
             selectedPeer = device
+            showDetail = true
         } label: {
             HStack(spacing: 14) {
                 ZStack {
@@ -84,11 +85,9 @@ struct HomeView: View {
 
                 Spacer()
 
-                if device.isOnline {
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
             .padding(.vertical, 4)
         }
