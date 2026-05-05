@@ -67,4 +67,4 @@ targets:
               --linked \
               --base "${PWD}" \
               --out "${PWD}/app/iOS/app.bundle" \
-              "${PWD}/shared/js/app.js"
+              "${PWD}/js/app.js"
