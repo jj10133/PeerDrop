@@ -86,7 +86,7 @@ struct SettingsView: View {
         .help("Show QR Code")
         .popover(isPresented: $showPeerIDQR, arrowEdge: .trailing) {
             if !worker.myPeerID.isEmpty {
-                QRCodeView(content: worker.myPeerID)
+                QRCodeView(content: "peerdrop://connect?id=\(worker.myPeerID)")
             }
         }
     }

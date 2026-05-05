@@ -62,7 +62,7 @@ struct SettingsViewiOS: View {
             .navigationTitle("Settings")
             .sheet(isPresented: $showQR) {
                 NavigationStack {
-                    QRCodeView(content: worker.myPeerID)
+                    QRCodeView(content: "peerdrop://connect?id=\(worker.myPeerID)")
                         .navigationTitle("Scan to Connect")
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {
