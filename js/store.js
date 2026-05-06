@@ -1,14 +1,21 @@
-// store.js — Persistence layer. Three responsibilities, each clearly separated:
-//   1. Identity  — load/generate the mnemonic, derive keys
-//   2. Config    — download path setting
-//   3. Peers     — saved contacts list
+// store.js — Persistence layer.
 
 const fs           = require('bare-fs')
 const path         = require('bare-path')
 const os           = require('bare-os')
 const IdentityKeys = require('keet-identity-key')
 
-const ROOT = path.join(os.homedir(), '.peerdrop')
+const platform = os.platform()
+
+// On iOS use Documents/ which is always writable and visible in Files app.
+// On macOS/Linux use ~/.peerdrop at home directory.
+const ROOT = platform === 'ios'
+  ? path.join(os.homedir(), 'Documents', '.peerdrop')
+  : path.join(os.homedir(), '.peerdrop')
+
+const DEFAULT_DOWNLOAD = platform === 'ios'
+  ? path.join(os.homedir(), 'Documents', 'PeerDrop')
+  : path.join(os.homedir(), 'Downloads', 'PeerDrop')
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -44,17 +51,6 @@ async function loadIdentity () {
 }
 
 // ─── 2. Config ────────────────────────────────────────────────────────────────
-//
-// On iOS, ~/Downloads doesn't exist and isn't visible in the Files app.
-// ~/Documents/PeerDrop is visible under Files → On My iPhone → PeerDrop
-// (requires UIFileSharingEnabled = true in Info.plist).
-// On macOS/Linux, ~/Downloads/PeerDrop is the expected location.
-
-const platform = os.platform()
-
-const DEFAULT_DOWNLOAD = platform === 'ios'
-  ? path.join(os.homedir(), 'Documents', 'PeerDrop')
-  : path.join(os.homedir(), 'Downloads', 'PeerDrop')
 
 const CONFIG_PATH = path.join(ROOT, 'config.json')
 
