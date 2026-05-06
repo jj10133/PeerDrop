@@ -23,9 +23,16 @@ struct PeerDropApp: App {
                         .onDisappear { hasCompletedOnboarding = true }
                 }
                 .onOpenURL { url in
-                    if url.scheme == "peerdrop", url.host == "send" {
-                        worker.processPendingTransfer()
-                    }
+                        if url.scheme == "peerdrop" {
+                            if url.host == "send" {
+                                worker.processPendingTransfer()
+                            } else if url.host == "connect",
+                                      let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                                          .queryItems?.first(where: { $0.name == "id" })?.value {
+                                print("📲 connecting to peer:", id.prefix(16))
+                                worker.connectPeer(peerID: id)
+                            }
+                        }
                 }
                 .onChange(of: scenePhase) { phase in
                     switch phase {
