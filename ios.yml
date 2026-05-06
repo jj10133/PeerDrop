@@ -11,7 +11,7 @@ targets:
       - framework: frameworks/BareKit.xcframework
       - package: BareKit
       - package: BareRPC
-      # - target: AppIOSShare    # uncomment when App Group provisioning is ready
+      - target: PeerDrop-iOS-Share    # uncomment when App Group provisioning is ready
     sources:
       - app/iOS
       - shared
