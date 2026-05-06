@@ -22,15 +22,15 @@ extension Worker: RPCDelegate {
         else { return }
 
         switch event.command {
-        case Cmd.ready:            onReady(json)
-        case Cmd.savedPeers:       onSavedPeers(json)
-        case Cmd.peerConnected:    onPeerConnected(json)
+        case Cmd.ready: onReady(json)
+        case Cmd.savedPeers: onSavedPeers(json)
+        case Cmd.peerConnected: onPeerConnected(json)
         case Cmd.peerDisconnected: onPeerDisconnected(json)
-        case Cmd.transferStarted:  onTransferStarted(json)
+        case Cmd.transferStarted: onTransferStarted(json)
         case Cmd.transferProgress: onTransferProgress(json)
         case Cmd.transferComplete: onTransferComplete(json)
-        case Cmd.error:            onError(json)
-        default:                   break
+        case Cmd.error: onError(json)
+        default: break
         }
     }
 
@@ -44,8 +44,11 @@ extension Worker: RPCDelegate {
         guard let peerID = data["peerID"] as? String else { return }
         let dl = data["downloadPath"] as? String ?? ""
         DispatchQueue.main.async {
-            self.myPeerID     = peerID
+            self.myPeerID = peerID
             self.downloadPath = dl
+            // Write saved peers to App Group immediately on launch
+            // so Share Extension has data even before any peer connects
+            self.syncPeersToAppGroup()
         }
     }
 
@@ -54,17 +57,17 @@ extension Worker: RPCDelegate {
         DispatchQueue.main.async {
             self.knownDevices = peers.compactMap { p in
                 guard let dk = p["discoveryKey"] as? String else { return nil }
-                let name        = p["displayName"] as? String
-                let platform    = p["platform"]    as? String
-                let isOnline    = self.knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
+                let name = p["displayName"] as? String
+                let platform = p["platform"] as? String
+                let isOnline = self.knownDevices.first(where: { $0.id == dk })?.isOnline ?? false
                 let isOwnDevice = dk == self.myPeerID
                 return PeerDevice(
-                    id:           dk,
+                    id: dk,
                     discoveryKey: dk,
-                    name:         name ?? String(dk.prefix(12)) + "...",
-                    systemImage:  self.systemImage(for: platform ?? ""),
-                    isOnline:     isOnline,
-                    isOwnDevice:  isOwnDevice
+                    name: name ?? String(dk.prefix(12)) + "...",
+                    systemImage: self.systemImage(for: platform ?? ""),
+                    isOnline: isOnline,
+                    isOwnDevice: isOwnDevice
                 )
             }
             self.syncPeersToAppGroup()
@@ -73,22 +76,22 @@ extension Worker: RPCDelegate {
 
     private func onPeerConnected(_ data: [String: Any]) {
         guard
-            let noiseKey     = data["noiseKey"]     as? String,
+            let noiseKey = data["noiseKey"] as? String,
             let discoveryKey = data["discoveryKey"] as? String,
-            let displayName  = data["displayName"]  as? String,
-            let platform     = data["platform"]     as? String
+            let displayName = data["displayName"] as? String,
+            let platform = data["platform"] as? String
         else { return }
         let isOwnDevice = data["isOwnDevice"] as? Bool ?? false
 
         DispatchQueue.main.async {
             self.noiseToDiscovery[noiseKey] = discoveryKey
             let updated = PeerDevice(
-                id:           discoveryKey,
+                id: discoveryKey,
                 discoveryKey: discoveryKey,
-                name:         displayName,
-                systemImage:  self.systemImage(for: platform),
-                isOnline:     true,
-                isOwnDevice:  isOwnDevice
+                name: displayName,
+                systemImage: self.systemImage(for: platform),
+                isOnline: true,
+                isOwnDevice: isOwnDevice
             )
             if let i = self.knownDevices.firstIndex(where: { $0.id == discoveryKey }) {
                 self.knownDevices[i] = updated
@@ -106,12 +109,12 @@ extension Worker: RPCDelegate {
             if let i = self.knownDevices.firstIndex(where: { $0.id == dk }) {
                 let d = self.knownDevices[i]
                 self.knownDevices[i] = PeerDevice(
-                    id:           d.id,
+                    id: d.id,
                     discoveryKey: d.discoveryKey,
-                    name:         d.name,
-                    systemImage:  d.systemImage,
-                    isOnline:     false,
-                    isOwnDevice:  d.isOwnDevice
+                    name: d.name,
+                    systemImage: d.systemImage,
+                    isOnline: false,
+                    isOwnDevice: d.isOwnDevice
                 )
             }
             self.syncPeersToAppGroup()
@@ -120,36 +123,38 @@ extension Worker: RPCDelegate {
 
     private func onTransferStarted(_ data: [String: Any]) {
         guard
-            let id        = data["transferId"] as? String,
-            let peerId    = data["peerId"]     as? String,
-            let fileName  = data["fileName"]   as? String,
-            let fileSize  = data["fileSize"]   as? Int,
-            let direction = data["direction"]  as? String
+            let id = data["transferId"] as? String,
+            let peerId = data["peerId"] as? String,
+            let fileName = data["fileName"] as? String,
+            let fileSize = data["fileSize"] as? Int,
+            let direction = data["direction"] as? String
         else { return }
         let isDirectory = data["isDirectory"] as? Bool ?? false
-        let fileCount   = data["fileCount"]   as? Int  ?? 0
+        let fileCount = data["fileCount"] as? Int ?? 0
         DispatchQueue.main.async {
-            self.activeTransfers.append(FileTransfer(
-                id:          id,
-                peerId:      peerId,
-                fileName:    fileName,
-                fileSize:    Int64(fileSize),
-                progress:    0,
-                direction:   direction == "receiving" ? .receiving : .sending,
-                isDirectory: isDirectory,
-                fileCount:   fileCount
-            ))
+            self.activeTransfers.append(
+                FileTransfer(
+                    id: id,
+                    peerId: peerId,
+                    fileName: fileName,
+                    fileSize: Int64(fileSize),
+                    progress: 0,
+                    direction: direction == "receiving" ? .receiving : .sending,
+                    isDirectory: isDirectory,
+                    fileCount: fileCount
+                ))
         }
     }
 
     private func onTransferProgress(_ data: [String: Any]) {
         guard
-            let id       = data["transferId"] as? String,
-            let progress = data["progress"]   as? Double
+            let id = data["transferId"] as? String,
+            let progress = data["progress"] as? Double
         else { return }
         DispatchQueue.main.async {
             if let i = self.activeTransfers.firstIndex(where: { $0.id == id }) {
-                var t = self.activeTransfers[i]; t.progress = progress
+                var t = self.activeTransfers[i]
+                t.progress = progress
                 self.activeTransfers[i] = t
             }
         }
@@ -159,12 +164,28 @@ extension Worker: RPCDelegate {
         guard let id = data["transferId"] as? String else { return }
         DispatchQueue.main.async {
             if let t = self.activeTransfers.first(where: { $0.id == id }) {
+                // Clean up App Group temp file if it came from Share Extension
+                if t.direction == .sending {
+                    let container = FileManager.default.containerURL(
+                        forSecurityApplicationGroupIdentifier: "group.to.foss.peerdrop"
+                    )
+                    if let path = container?.appendingPathComponent(t.fileName),
+                        FileManager.default.fileExists(atPath: path.path)
+                    {
+                        try? FileManager.default.removeItem(at: path)
+                    }
+                }
                 self.showNotification(
                     title: t.direction == .receiving ? "File Received" : "File Sent",
-                    body:  t.direction == .receiving
-                        ? "\(t.fileName) saved to downloads folder"
+                    body: t.direction == .receiving
+                        ? "\(t.fileName) saved to PeerDrop"
                         : "\(t.fileName) sent successfully"
                 )
+                #if canImport(UIKit)
+                    if t.direction == .receiving {
+                        NotificationCenter.default.post(name: .transferDidComplete, object: nil)
+                    }
+                #endif
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 self.activeTransfers.removeAll { $0.id == id }

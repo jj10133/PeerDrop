@@ -1,12 +1,6 @@
-//
-//  AppGroup.swift
-//  App
-//
-//  Created by Janardhan on 2026-03-28.
-//
-
 // AppGroup.swift — shared container between main app and Share Extension.
-// Both targets declare group.to.foss.peerdrop in their entitlements.
+// Uses file-based JSON storage instead of UserDefaults to avoid
+// CFPrefsPlistSource issues across extension process boundaries.
 
 import Foundation
 
@@ -28,9 +22,9 @@ public struct AppGroupPeer: Codable {
 }
 
 public struct PendingTransfer: Codable {
-    public let fileURL:       String   // file:// URL of the item to send
-    public let peerKey:       String   // discoveryKey of target peer
-    public let peerName:      String   // display name for UX
+    public let fileURL:  String
+    public let peerKey:  String
+    public let peerName: String
 
     public init(fileURL: String, peerKey: String, peerName: String) {
         self.fileURL  = fileURL
@@ -40,43 +34,72 @@ public struct PendingTransfer: Codable {
 }
 
 public enum AppGroup {
-    static let id          = "group.to.foss.peerdrop"
-    static let peersKey    = "peerdrop.peers"
-    static let transferKey = "peerdrop.pendingTransfer"
+    static let id = "group.to.foss.peerdrop"
 
-    static var container: UserDefaults? {
-        UserDefaults(suiteName: id)
+    static var containerURL: URL? {
+        FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: id
+        )
     }
 
-    // MARK: - Peers (written by main app, read by extension)
+    static var peersFileURL: URL? {
+        containerURL?.appendingPathComponent("peerdrop-peers.json")
+    }
+
+    static var transferFileURL: URL? {
+        containerURL?.appendingPathComponent("peerdrop-transfer.json")
+    }
+
+    // MARK: - Peers
 
     public static func writePeers(_ peers: [AppGroupPeer]) {
+        guard let url = peersFileURL else {
+            NSLog("❌ [AppGroup] containerURL is nil — check entitlements")
+            return
+        }
         guard let data = try? JSONEncoder().encode(peers) else { return }
-        container?.set(data, forKey: peersKey)
+        do {
+            try data.write(to: url, options: .atomic)
+            NSLog("✅ [AppGroup] wrote %d peers to %@", peers.count, url.path)
+        } catch {
+            NSLog("❌ [AppGroup] write error: %@", error.localizedDescription)
+        }
     }
 
     public static func readPeers() -> [AppGroupPeer] {
-        guard let data = container?.data(forKey: peersKey),
+        guard let url = peersFileURL else {
+            NSLog("❌ [AppGroup] containerURL is nil — check entitlements")
+            return []
+        }
+        NSLog("📦 [AppGroup] reading peers from %@", url.path)
+        guard let data = try? Data(contentsOf: url),
               let peers = try? JSONDecoder().decode([AppGroupPeer].self, from: data)
-        else { return [] }
+        else {
+            NSLog("⚠️ [AppGroup] no peers file or decode failed")
+            return []
+        }
+        NSLog("✅ [AppGroup] read %d peers", peers.count)
         return peers
     }
 
-    // MARK: - Pending transfer (written by extension, read by main app)
+    // MARK: - Pending transfer
 
     public static func writePendingTransfer(_ transfer: PendingTransfer) {
-        guard let data = try? JSONEncoder().encode(transfer) else { return }
-        container?.set(data, forKey: transferKey)
+        guard let url = transferFileURL,
+              let data = try? JSONEncoder().encode(transfer) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     public static func readPendingTransfer() -> PendingTransfer? {
-        guard let data = container?.data(forKey: transferKey),
+        guard let url = transferFileURL,
+              let data = try? Data(contentsOf: url),
               let transfer = try? JSONDecoder().decode(PendingTransfer.self, from: data)
         else { return nil }
         return transfer
     }
 
     public static func clearPendingTransfer() {
-        container?.removeObject(forKey: transferKey)
+        guard let url = transferFileURL else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 }
