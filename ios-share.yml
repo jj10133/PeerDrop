@@ -6,8 +6,7 @@ targets:
       iOS: 16.0
     settings:
       base:
-        PRODUCT_NAME: PeerDrop-iOS-Share
-        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop.ios.share
+        PRODUCT_BUNDLE_IDENTIFIER: to.foss.peerdrop.share
         INFOPLIST_FILE: app/iOS-Share/Info.plist
         SWIFT_COMPILATION_MODE: wholemodule
     entitlements:

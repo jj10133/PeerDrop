@@ -1,7 +1,7 @@
 
 #include "Base.xcconfig"
 
-PRODUCT_BUNDLE_IDENTIFIER = to.foss.peerdrop.ios
+PRODUCT_BUNDLE_IDENTIFIER = to.foss.peerdrop
 CURRENT_PROJECT_VERSION = 1
 MARKETING_VERSION = 0.2.0
 ENABLE_PREVIEWS = YES
