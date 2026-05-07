@@ -53,8 +53,8 @@ struct SettingsViewiOS: View {
                         Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
                             .foregroundStyle(.secondary)
                     }
-                    Link(destination: URL(string: "https://github.com/your-org/peerdrop")!) {
-                        Label("Source Code", systemImage: "chevron.left.forwardslash.chevron.right")
+                    Link(destination: URL(string: "https://peerdrop.app/privacy.html")!) {
+                        Label("Privacy Policy", systemImage: "chevron.left.forwardslash.chevron.right")
                     }
                 }
             }
