@@ -49,5 +49,7 @@
 		<key>UIImageName</key>
 		<string></string>
 	</dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
